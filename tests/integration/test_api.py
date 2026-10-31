@@ -16,6 +16,10 @@ def client(tmp: Path, brain: FakeBrain | None = None) -> TestClient:
     return TestClient(create_app(brain or FakeBrain(ScriptedModel(responses=[answer("hi")])), tmp / "c.db", "test-token"))
 
 
+def hello(ws: Any) -> None:
+    assert ws.receive_json()["type"] == "approvals"  # pending approvals are pushed on connect
+
+
 def drain(ws: Any) -> list[dict[str, Any]]:
     events = []
     while True:
@@ -39,6 +43,7 @@ def test_task_streams_intent_plan_tools_verdict_final(env: Path, tmp_path: Path)
     brain = FakeBrain(ScriptedModel(responses=[call("file_read", {"path": "n.txt"}), answer("done: hello")]),
                       intents=[TASK])
     with client(tmp_path, brain) as c, c.websocket_connect("/ws", headers=AUTH) as ws:
+        hello(ws)
         ws.send_json({"type": "user", "thread_id": "abc", "text": "read n.txt"})
         events = drain(ws)
     assert [e["type"] for e in events] == ["intent", "plan", "tool_call", "tool_result", "verdict", "final"]
@@ -47,6 +52,7 @@ def test_task_streams_intent_plan_tools_verdict_final(env: Path, tmp_path: Path)
 
 def test_bad_requests_get_errors_and_connection_survives(tmp_path: Path) -> None:
     with client(tmp_path) as c, c.websocket_connect("/ws", headers=AUTH) as ws:
+        hello(ws)
         ws.send_json({"text": "hi", "thread_id": "../etc"})
         assert drain(ws)[-1]["code"] == "bad_request"
         ws.send_json({"text": ""})
@@ -76,6 +82,7 @@ def test_turns_never_run_concurrently(tmp_path: Path) -> None:
 
     def talk(c: TestClient, tid: str) -> None:
         with c.websocket_connect("/ws", headers=AUTH) as ws:
+            hello(ws)
             ws.send_json({"text": "hi", "thread_id": tid})
             results.append(drain(ws)[-1]["type"])
 
@@ -88,6 +95,7 @@ def test_turns_never_run_concurrently(tmp_path: Path) -> None:
 
 def test_usage_and_rename_commands(tmp_path: Path) -> None:
     with client(tmp_path) as c, c.websocket_connect("/ws", headers=AUTH) as ws:
+        hello(ws)
         ws.send_json({"text": "hi"})
         drain(ws)
         ws.send_json({"type": "usage"})
@@ -103,6 +111,7 @@ def test_missing_api_key_is_reported_not_crashed(tmp_path: Path, monkeypatch: py
     monkeypatch.setattr("personal_agent.llm.factory.get_secret", lambda name: None)
     app = create_app(db_path=tmp_path / "c.db", token="test-token")  # real LiveBrain
     with TestClient(app) as c, c.websocket_connect("/ws", headers=AUTH) as ws:
+        hello(ws)
         ws.send_json({"text": "hi"})
         assert drain(ws)[-1]["code"] == "no_api_key"
 
@@ -117,6 +126,7 @@ def test_provider_errors_map_to_safe_codes(tmp_path: Path, msg: str, code: str) 
         raise RuntimeError(msg)
 
     with client(tmp_path, FakeBrain(RunnableLambda(boom))) as c, c.websocket_connect("/ws", headers=AUTH) as ws:
+        hello(ws)
         ws.send_json({"text": "hi"})
         ev = drain(ws)[-1]
     assert ev["code"] == code and "sk-abcdefghijk" not in ev["message"]

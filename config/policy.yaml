@@ -1,21 +1,39 @@
-# Default-deny posture. Tiers: T0 auto, T1 auto (configurable), T2 HITL, T3 denied.
-# Single-quoted strings: backslashes are literal in YAML single quotes.
+# Default-deny posture. Tool tiers are declared in code (tools/*).
+# T0 read-only: auto | T1 reversible & contained: auto (unless it follows untrusted content) |
+# T2 real-desktop writes, shell, network sandbox: human approval | T3 dangerous: denied.
 default_tier: T3          # tools/actions with no declared metadata are denied
 mcp_default_tier: T2      # external MCP tools need approval unless the user classifies them
 tiers:
   T1_auto_approve: true
-  T3_allow_with_confirmation: false
+  T3_allow_with_confirmation: false   # even when enabled, T3 needs a double confirmation
+approval:
+  timeout_s: 600          # an unanswered approval expires and counts as a rejection
 paths:
   allow: ['%USERPROFILE%\Documents\agent-workspace']
-  deny: ['C:\Windows', 'C:\Program Files', '%APPDATA%\personal-agent\secrets']
+  deny: ['C:\Windows', 'C:\Program Files', 'C:\Program Files (x86)', '%APPDATA%\personal-agent']
 commands:
-  # Phase 1 has no HITL yet. The command string must FULL-MATCH one pattern and is run as argv
-  # (no shell, so no aliases/expansion). Anything else is refused until approvals exist (Phase 3).
+  # Commands matching a pattern run without approval, as argv (no shell). Anything else is T2 (approval).
   allow_patterns: ['hostname', 'whoami', 'python --version', 'where [A-Za-z0-9_.\-]+']
   timeout_s: 30
-  deny_patterns: ['--output','format\s', 'reg\s+(add|delete)', 'Remove-Item\s+.*-Recurse.*[A-Z]:\$']
+  # Never allowed, not even with approval:
+  deny_patterns: ['--output', 'format\s', 'format-volume', 'clear-disk', 'reg\s+(add|delete|import)',
+                  '(remove-item|\bri\b|\brm\b|\bdel\b|\berase\b)\s+.*-r(ecurse)?', 'rm\s+-rf', '\bdel\s+/[sqf]',
+                  '\b(rd|rmdir)\s+/s', 'Set-ExecutionPolicy', 'Invoke-Expression', '\biex\b', 'DownloadString',
+                  '-enc(odedcommand)?\b', 'frombase64string', 'Start-Process\s+.*-Verb\s+RunAs', 'net\s+user',
+                  'schtasks', 'vssadmin', 'diskpart', 'bcdedit', 'takeown', 'cipher\s+/w', 'Stop-Computer',
+                  'Restart-Computer', '\bshutdown\b']
 network:
   domain_allowlist: []
 rate_limits:
   per_tool_per_minute: 30
+sandbox:
+  image: personal-agent-sandbox:1
+  cpus: 1
+  memory: 512m
+  pids: 128
+  idle_timeout_s: 300
+  exec_timeout_s: 60
+  max_file_mb: 5
+  max_files: 200
+  output_dir: sandbox-output          # relative to the workspace; new files may be applied here without approval
 untrusted_content: treat_all_tool_output_as_data

@@ -5,16 +5,41 @@ import pytest
 from personal_agent.policy.engine import PolicyEngine, ToolMeta
 from personal_agent.tools import web
 from personal_agent.tools.files import file_read
-from personal_agent.tools.registry import policy
+from personal_agent.tools.registry import load_tools, meta_for, policy
 from personal_agent.tools.shell import shell
 
 
-def test_unknown_tool_and_high_tiers_denied() -> None:
+def test_tier_decisions() -> None:
     p = PolicyEngine()
-    assert not p.authorize(None, None).allowed
-    assert not p.authorize("x", ToolMeta(tier="T2")).allowed
-    assert not p.authorize("x", ToolMeta(tier="T3")).allowed
-    assert p.authorize("x", ToolMeta(tier="T0")).allowed
+    assert p.evaluate("x", None, {}).action == "deny"  # unknown tool
+    assert p.evaluate("x", ToolMeta(tier="T0"), {}).action == "allow"
+    assert p.evaluate("x", ToolMeta(tier="T1"), {}).action == "allow"
+    assert p.evaluate("x", ToolMeta(tier="T2"), {}).action == "approve"
+    assert p.evaluate("x", ToolMeta(tier="T3"), {}).action == "deny"  # disabled by default
+
+
+def test_taint_escalates_t1_side_effects_but_not_reads() -> None:
+    p = PolicyEngine()
+    assert p.evaluate("x", ToolMeta(tier="T1", side_effects=True), {}, tainted=True).action == "approve"
+    assert p.evaluate("x", ToolMeta(tier="T1", side_effects=False), {}, tainted=True).action == "allow"
+    assert p.evaluate("x", ToolMeta(tier="T0"), {}, tainted=True).action == "allow"
+
+
+def test_args_dependent_tier_and_rate_limit(env: Path) -> None:
+    p = PolicyEngine()
+    m = ToolMeta(tier="T1", tier_fn=lambda a: "T2" if a.get("network") else "T1")
+    assert p.evaluate("sb", m, {"network": False}).action == "allow"
+    assert p.evaluate("sb", m, {"network": True}).action == "approve"
+    p.cfg["rate_limits"]["per_tool_per_minute"] = 3  # cfg is cached per mtime: mutate in place for the test
+    assert [p.evaluate("r", ToolMeta(tier="T0"), {}).action for _ in range(5)] == ["allow"] * 3 + ["deny"] * 2
+
+
+def test_domain_allowlist() -> None:
+    p = PolicyEngine()
+    p.cfg["network"]["domain_allowlist"] = ["example.com"]
+    assert p.check_domain("https://api.example.com/x").allowed
+    assert not p.check_domain("https://evilexample.com/").allowed
+    assert not p.check_domain("https://example.com.evil.io/").allowed
 
 
 def test_path_scope_and_traversal(env: Path) -> None:
@@ -36,26 +61,33 @@ def test_file_read(env: Path) -> None:
 @pytest.mark.parametrize(
     "cmd",
     [
-        "del a.txt",  # not allowlisted
-        "echo a; del b",  # chaining
-        "echo hi > out.txt",  # redirection
-        "echo $env:USERPROFILE",  # variable expansion
-        "Get-ChildItem C:\\Windows",  # path outside scope
-        "dir ..\\..",  # traversal
-        "git diff --output=x.txt",  # writes a file
-        "git status",  # git reads repo config that can execute helpers
-        "echo hello",  # PowerShell alias/cmdlet surface is gone
-        "dir",
-        "where C:\\Windows\\notepad.exe",  # path argument not matched by the pattern
-        "whoami /all",  # extra args are not in the pattern
-        "hostname -s",
+        "git diff --output=x.txt",
+        "format c: /q",
+        "reg delete HKLM\\Software\\x /f",
+        "Remove-Item C:\\Users\\x -Recurse -Force",
+        "powershell -c Invoke-Expression 'calc'",
+        "Set-ExecutionPolicy Unrestricted",
+        "vssadmin delete shadows /all",
     ],
 )
-def test_shell_refuses(cmd: str) -> None:
-    assert shell.invoke({"command": cmd}).startswith("ERROR: command refused")
+def test_shell_hard_denies_even_if_a_human_would_approve(cmd: str) -> None:
+    meta = meta_for("shell")
+    assert meta is not None and meta.tier_fn is not None and meta.tier_fn({"command": cmd}) == "T3"  # gate: denied
+    assert shell.invoke({"command": cmd}).startswith("ERROR: command refused")  # and the tool itself refuses
+
+
+@pytest.mark.parametrize(
+    ("cmd", "tier"),
+    [("hostname", "T1"), ("whoami", "T1"), ("where python", "T1"), ("echo hello", "T2"), ("whoami /all", "T2"),
+     ("echo a; del b", "T2"), ("echo $env:USERPROFILE", "T2"), ("Get-ChildItem C:\\Windows", "T2")],
+)
+def test_shell_tier_classification(cmd: str, tier: str) -> None:
+    meta = meta_for("shell")
+    assert meta is not None and meta.tier_fn is not None and meta.tier_fn({"command": cmd}) == tier
 
 
 def test_shell_runs_allowlisted_as_argv() -> None:
+    load_tools()
     out = shell.invoke({"command": "hostname"})
     assert out.startswith("exit=0") and len(out) > len("exit=0\n")
     assert shell.invoke({"command": "where python"}).startswith("exit=")

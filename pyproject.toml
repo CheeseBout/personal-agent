@@ -27,7 +27,6 @@ dependencies = [
 # Heavy / later-phase deps stay optional so the idle daemon stays small.
 mcp = ["langchain-mcp-adapters==0.3.2"]
 observability = ["langfuse==5.1.0"]
-sandbox = ["docker==7.2.0"]
 rag = ["sqlite-vec==0.1.9", "pypdf==6.21.4", "python-docx==1.2.0", "watchdog==7.0.0"]
 local-embeddings = ["fastembed==0.9.1"]
 browser = ["playwright==1.64.1"]
@@ -62,5 +61,8 @@ asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 testpaths = ["tests"]
 pythonpath = ["tests"]
-markers = ["live: calls real LLM providers and costs money; run with -m live"]
-addopts = "-m 'not live'"
+markers = [
+  "live: calls real LLM providers and costs money; run with -m live",
+  "docker: needs a running Docker engine; run with -m docker",
+]
+addopts = "-m 'not live and not docker'"

@@ -1,15 +1,20 @@
-"""Policy engine (Phase 1 subset): tiers, path scope, command rules. Hot-reloads on file change.
+"""Policy engine: tiers, path/command/domain rules, rate limits. Hot-reloads when policy.yaml changes.
 
-HITL for T2 arrives in Phase 3, so until then T2/T3 are refused.
+Tiers: T0 read-only (auto) | T1 reversible, contained (auto unless tainted) | T2 needs human approval |
+T3 denied unless explicitly enabled (and then needs a double confirmation).
 """
 
 from __future__ import annotations
 
 import os
 import re
+import time
+from collections import defaultdict, deque
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
+from urllib.parse import urlparse
 
 import yaml
 
@@ -27,10 +32,29 @@ class Decision:
 
 @dataclass(frozen=True)
 class ToolMeta:
-    tier: str  # T0..T3
+    tier: str  # T0..T3 (static default)
     side_effects: bool = False
     needs_sandbox: bool = False
     network: bool = False
+    untrusted_output: bool = False  # result may contain attacker-controlled text -> taints the task
+    risk: str = "medium"  # shown on the approval card: low | medium | high
+    tier_fn: Callable[[dict[str, Any]], str] | None = None  # tier depends on the arguments
+    preview_fn: Callable[[dict[str, Any]], str] | None = None  # read-only preview/diff for the approval card
+    scope_fn: Callable[[dict[str, Any]], str | None] | None = None  # "approve and remember" scope; None = never remember
+
+
+@dataclass(frozen=True)
+class Gate:
+    action: Literal["allow", "approve", "deny"]
+    tier: str
+    reason: str = ""
+    risk: str = "low"
+    confirm: bool = False  # T3: the user must confirm twice
+
+
+def _norm_cmd(c: str) -> str:
+    """Undo cheap obfuscation: PowerShell backtick escapes, cmd carets, quotes, runs of whitespace."""
+    return re.sub(r"\s+", " ", re.sub(r"[`^'\"]", "", c)).strip()
 
 
 def _norm(p: str | Path) -> str:
@@ -46,6 +70,7 @@ class PolicyEngine:
         self._path = path or config_dir() / "policy.yaml"
         self._mtime = 0.0
         self._cfg: dict[str, Any] = {}
+        self._calls: dict[str, deque[float]] = defaultdict(deque)
 
     @property
     def cfg(self) -> dict[str, Any]:
@@ -55,13 +80,42 @@ class PolicyEngine:
             self._mtime = m
         return self._cfg
 
-    def authorize(self, tool: str | None, meta: ToolMeta | None) -> Decision:
-        if tool is None or meta is None:
-            return Decision(False, f"unknown tool '{tool}' is denied by default")
-        if meta.tier in ("T0", "T1"):
-            return Decision(True)
-        return Decision(False, f"{meta.tier} tools need user approval, which is not available yet")
+    # ---- tool-level decision -------------------------------------------------------------------
+    def evaluate(self, name: str, meta: ToolMeta | None, args: dict[str, Any], tainted: bool = False) -> Gate:
+        if meta is None:
+            return Gate("deny", "T3", f"unknown tool '{name}' is denied by default", "high")
+        tier = meta.tier_fn(args) if meta.tier_fn else meta.tier
+        risk = meta.risk
+        if (r := self.rate_limited(name)) is not None:
+            return Gate("deny", tier, r, risk)
+        if tier == "T0":
+            return Gate("allow", tier)
+        if tier == "T1":
+            auto = self.cfg.get("tiers", {}).get("T1_auto_approve", True)
+            if tainted and meta.side_effects:
+                return Gate("approve", "T2", "this action follows untrusted content (web/file/tool output)", risk)
+            return Gate("allow", tier) if auto else Gate("approve", tier, "T1 auto-approval is off", risk)
+        if tier == "T2":
+            why = "needs your approval" + (" (follows untrusted content)" if tainted else "")
+            return Gate("approve", tier, why, risk)
+        if self.cfg.get("tiers", {}).get("T3_allow_with_confirmation", False):
+            return Gate("approve", "T3", "dangerous action: explicit confirmation required", "critical", confirm=True)
+        return Gate("deny", "T3", "dangerous (T3) actions are disabled by policy", "critical")
 
+    def rate_limited(self, name: str) -> str | None:
+        """Sliding-window limit per tool; counts the attempt when it is allowed."""
+        limit = int(self.cfg.get("rate_limits", {}).get("per_tool_per_minute", 0))
+        if limit <= 0:
+            return None
+        now, q = time.monotonic(), self._calls[name]
+        while q and now - q[0] > 60:
+            q.popleft()
+        if len(q) >= limit:
+            return f"rate limit: more than {limit} '{name}' calls in a minute"
+        q.append(now)
+        return None
+
+    # ---- argument-level checks used by the tools ---------------------------------------------------
     def check_path(self, path: str | Path) -> Decision:
         raw = os.path.expandvars(str(path))
         if raw.startswith(("\\\\", "//")) or ":" in raw[2:]:
@@ -78,12 +132,30 @@ class PolicyEngine:
         return Decision(False, "path is outside the allowed folders")
 
     def check_command(self, command: str) -> Decision:
+        """Strict allowlist used for commands that run WITHOUT approval."""
         c = self.cfg.get("commands", {})
         if _SHELL_META.search(command):
             return Decision(False, "command chaining/redirection characters are not allowed")
-        for pat in c.get("deny_patterns", []):
-            if re.search(pat, command, re.IGNORECASE):
-                return Decision(False, "command matches a deny pattern")
+        if self.is_hard_denied_command(command):
+            return Decision(False, "command matches a deny pattern")
         if any(re.fullmatch(p, command.strip()) for p in c.get("allow_patterns", [])):
             return Decision(True)
-        return Decision(False, "command is not on the allowlist (approval not available yet)")
+        return Decision(False, "command is not on the allowlist")
+
+    def is_hard_denied_command(self, command: str) -> str | None:
+        """Deny patterns apply even to commands a human could approve.
+
+        Best-effort text matching on a normalised command (PowerShell has many spellings): the real boundary
+        for anything not allow-listed is the human reading the exact command on the approval card."""
+        norm = _norm_cmd(command)
+        for pat in self.cfg.get("commands", {}).get("deny_patterns", []):
+            if re.search(pat, command, re.IGNORECASE) or re.search(pat, norm, re.IGNORECASE):
+                return "command matches a deny pattern (never allowed, even with approval)"
+        return None
+
+    def check_domain(self, url: str) -> Decision:
+        host = (urlparse(url).hostname or "").lower()
+        allow = [d.lower() for d in self.cfg.get("network", {}).get("domain_allowlist", [])]
+        if host and any(host == d or host.endswith("." + d) for d in allow):
+            return Decision(True)
+        return Decision(False, "domain is not on the allowlist")

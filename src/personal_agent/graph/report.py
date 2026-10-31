@@ -14,6 +14,7 @@ REASONS = {
     "verifications": ("đã kiểm tra nhiều lần mà chưa đạt", "verification kept failing"),
     "no_progress": ("không có tiến triển (lặp lại cùng một thao tác)", "no progress (the same action kept repeating)"),
     "replans": ("đã lập lại kế hoạch quá số lần cho phép", "the replan limit was reached"),
+    "killed": ("công tắc khẩn cấp đã được bật", "the kill switch was engaged"),
     "daily_tokens": ("đã chạm hạn mức token trong ngày (bảo vệ quota)", "the daily token cap was reached (quota protection)"),
     "daily_cost": ("đã chạm hạn mức chi phí trong ngày (bảo vệ quota)", "the daily cost cap was reached (quota protection)"),
 }

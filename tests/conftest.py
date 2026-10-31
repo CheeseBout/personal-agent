@@ -6,6 +6,7 @@ import yaml
 
 from personal_agent.settings.settings import load_settings
 from personal_agent.tools.registry import policy
+from personal_agent.tools.sandbox_tools import reset_singletons
 
 
 @pytest.fixture(autouse=True)
@@ -25,4 +26,5 @@ def env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     monkeypatch.setenv("PERSONAL_AGENT_ENV_FILE", str(tmp_path / "no.env"))  # never read a real .env
     load_settings.cache_clear()
     policy.cache_clear()
+    reset_singletons()
     return ws

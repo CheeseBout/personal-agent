@@ -22,6 +22,13 @@ python -m uv run mypy src
 
 The per-install API token is created on first start and stored in Credential Manager; logs go to `%APPDATA%\personal-agent\logs\`.
 
+## Phase 3: safety
+Writes, shell commands and anything touching existing files stop at an **approval card** (`y` / `n` + reason / `e` edit args /
+`r` remember for that folder). `/kill` in `agent-chat` (or `POST /kill` with the token) halts everything immediately.
+Policy lives in `config/policy.yaml` (hot-reloaded). Sandbox tools need Docker Desktop running; without it they report
+that clearly and everything else keeps working. Audit trail: `/audit`. Details and limits: `docs/phase3.md`.
+Real-container tests (need Docker running): `python -m uv run pytest -m docker`.
+
 ## Phase 2: budgets and quota protection
 Per-task and **daily** caps live in `config/default.yaml` (`budgets:`; defaults: 1M tokens / $2 per day). Override in
 `%APPDATA%\personal-agent\config.yaml`. In `agent-chat`: `/usage` shows today's totals, `/name <name>` renames the agent.

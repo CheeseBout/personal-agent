@@ -5,9 +5,11 @@ Budgets, daily caps and no-progress detection are enforced in code, never left t
 
 from __future__ import annotations
 
+import time
 from collections.abc import Awaitable, Callable, Sequence
 from typing import Any
 
+import structlog
 from langchain_core.messages import (
     AIMessage,
     AnyMessage,
@@ -17,9 +19,11 @@ from langchain_core.messages import (
     SystemMessage,
     ToolMessage,
 )
+from langchain_core.runnables import RunnableConfig
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.graph import END, START, StateGraph
 from langgraph.prebuilt import ToolNode
+from langgraph.types import Command, interrupt
 from pydantic import BaseModel
 
 from personal_agent.graph.brain import Brain, LiveBrain
@@ -36,12 +40,17 @@ from personal_agent.graph.lang import detect_lang
 from personal_agent.graph.limits import charge, exceeded, is_failure, new_used, repeating, signature
 from personal_agent.graph.report import build_report
 from personal_agent.graph.schemas import AgentState, Goal, Intent, Verdict
+from personal_agent.observability.audit import AuditLog
 from personal_agent.observability.usage import Meter
+from personal_agent.policy.approvals import ApprovalStore
+from personal_agent.policy.killswitch import KillSwitch
 from personal_agent.settings.settings import Settings, data_dir, load_settings
 from personal_agent.tools.artifacts import store_artifact
 from personal_agent.tools.registry import load_tools, meta_for, policy
 
-CLASSIFY_PROMPT = """Classify the user's latest request for a personal assistant on Windows.
+log = structlog.get_logger()
+
+CLASSIFY_PROMPT ="""Classify the user's latest request for a personal assistant on Windows.
 Be economical: simple chat or a question answerable from knowledge/one lookup -> intent chat|question,
 needs_plan=false, risk_level=low. Multi-step work, files, code, research, automation -> needs_plan=true.
 Set clarifying_question ONLY when the request is too ambiguous to act on (then confidence < 0.5), in the user's language."""
@@ -61,6 +70,12 @@ SUMMARY_PROMPT = """Summarise the conversation so far for the assistant's own la
 the conversation. Keep: the user's goals and preferences, decisions, file paths, results and open questions."""
 
 
+def resume_command(decisions: dict[str, Any]) -> Command[Any]:
+    """LangGraph silently ignores a falsy resume value, which would leave the thread paused forever;
+    always send a non-empty dict (the '_' marker cannot collide with a provider tool-call id)."""
+    return Command(resume={"_": True, **decisions})
+
+
 def user_request(messages: list[AnyMessage]) -> str:
     for m in reversed(messages):
         if isinstance(m, HumanMessage) and not text_of(m.content).startswith("[verifier]"):
@@ -73,10 +88,16 @@ def build_graph(
     brain: Brain | None = None,
     settings: Settings | None = None,
     meter: Meter | None = None,
+    audit: AuditLog | None = None,
+    approvals: ApprovalStore | None = None,
+    kill: KillSwitch | None = None,
 ) -> Any:
     cfg = settings or load_settings()
     brain = brain or LiveBrain(cfg)
     meter = meter or Meter(data_dir() / "usage.db", cfg.pricing)
+    audit = audit or AuditLog(data_dir() / "audit.db")
+    approvals = approvals or ApprovalStore(data_dir() / "approvals.db")
+    kill = kill or KillSwitch()
     tools = load_tools()
     pol = policy()
     B = cfg.budgets
@@ -94,7 +115,7 @@ def build_graph(
         return out.get("parsed"), charge_call(used, out.get("raw"), role)
 
     def halt(state: AgentState) -> str | None:
-        return exceeded(state["used"], B) or meter.daily_exceeded(B)
+        return "killed" if kill.engaged else exceeded(state["used"], B) or meter.daily_exceeded(B)
 
     # ---- nodes -------------------------------------------------------------------------------
     async def ingest(state: AgentState) -> dict[str, Any]:
@@ -103,7 +124,10 @@ def build_graph(
         if cfg.agent.language == "auto" and len(text.split()) <= 3 and state.get("lang"):
             lang = state["lang"]  # "ok", "tiếp tục"... keep the conversation's language
         return {"lang": lang, "intent": None, "goal": None, "notes": "", "verdict": "", "replans": 0,
-                "final": "", "used": new_used(), "stop_reason": meter.daily_exceeded(B) or ""}
+                # `tainted` is deliberately NOT reset: untrusted text stays in the thread history, so it can keep
+                # steering later turns. Start a new thread to get a clean slate.
+                "final": "", "used": new_used(), "gate": {},
+                "stop_reason": "killed" if kill.engaged else meter.daily_exceeded(B) or ""}
 
     async def classify(state: AgentState) -> dict[str, Any]:
         if r := halt(state):
@@ -157,16 +181,152 @@ def build_graph(
         used["steps"] += 1
         return {"messages": [resp], "used": used}
 
+    tool_by_name = {t.name: t for t in tools}
+
+    def public(rec: dict[str, Any]) -> dict[str, Any]:
+        keys = ("call_id", "tool", "args", "tier", "risk", "preview", "tainted", "reason", "expires_at")
+        return {k: rec[k] for k in keys} | {"thread_id": rec["thread_id"], "tainted": bool(rec["tainted"])}
+
+    def valid_args(name: str, args: Any) -> dict[str, Any] | None:
+        """Edited arguments must still satisfy the tool's schema."""
+        schema = getattr(tool_by_name.get(name), "args_schema", None)
+        try:
+            if isinstance(args, dict) and schema is not None and hasattr(schema, "model_validate"):
+                schema.model_validate(args)
+            return args if isinstance(args, dict) else None
+        except Exception:  # noqa: BLE001  any validation failure means 'reject the edit'
+            return None
+
+    async def gate(state: AgentState, config: RunnableConfig) -> dict[str, Any]:
+        """Decide EVERY tool call of the last AI message before any of them runs (idempotent: this node
+        re-runs on resume, so it must not execute anything). Calls needing a human go into one interrupt()."""
+        tid = str(config["configurable"]["thread_id"])
+        ai = state["messages"][-1]
+        if not isinstance(ai, AIMessage):
+            return {"gate": {}}
+        calls: list[dict[str, Any]] = [{**c, "id": str(c["id"])} for c in ai.tool_calls]
+        tainted = bool(state.get("tainted"))
+        plan: dict[str, dict[str, Any]] = {}
+        ask: list[dict[str, Any]] = []
+
+        def deny(cid: str, decision: str, message: str, tier: str = "T3", status: str = "error") -> None:
+            plan[cid] = {"action": "deny", "decision": decision, "message": message, "tier": tier,
+                         "status": status, "thread": tid}
+
+        def run(cid: str, decision: str, tier: str) -> None:
+            plan[cid] = {"action": "run", "decision": decision, "tier": tier, "thread": tid}
+
+        ids = [c["id"] for c in calls]
+        if len(set(ids)) != len(ids) or any(i in ("", "None") for i in ids):
+            # one approval must map to exactly one call: ambiguous ids could smuggle an unreviewed call
+            for c in calls:
+                deny(c["id"], "denied_policy", "DENIED: duplicate or missing tool-call ids")
+            return {"gate": plan}
+        for c in calls:
+            meta = meta_for(c["name"])
+            if kill.engaged:
+                deny(c["id"], "killed", "DENIED: the kill switch is engaged")
+                continue
+            try:
+                g = pol.evaluate(c["name"], meta, c["args"], tainted)
+            except Exception:
+                log.exception("policy_evaluation_failed", tool=c["name"])
+                deny(c["id"], "denied_policy", "DENIED: policy evaluation failed")
+                continue
+            if g.action == "deny":
+                deny(c["id"], "denied_policy", f"DENIED by policy: {g.reason}", g.tier)
+            elif g.action == "allow":
+                run(c["id"], "auto", g.tier)
+            else:
+                scope = meta.scope_fn(c["args"]) if meta and meta.scope_fn else None
+                if g.tier == "T2" and not tainted and not g.confirm and approvals.has_rule(c["name"], scope):
+                    run(c["id"], "auto_rule", g.tier)  # earlier 'approve and remember' for this scope
+                else:
+                    ask.append({"call": c, "gate": g, "meta": meta})
+        out: dict[str, Any] = {"gate": plan}
+        if ask:
+            recs = {}
+            for a in ask:
+                c, g, meta = a["call"], a["gate"], a["meta"]
+                try:
+                    preview = meta.preview_fn(c["args"]) if meta and meta.preview_fn else ""
+                except Exception:  # noqa: BLE001  a broken preview must not block the approval flow
+                    preview = "(preview unavailable)"
+                recs[c["id"]] = approvals.ensure(tid, c["id"], c["name"], c["args"], g.tier, g.risk, preview,
+                                                 tainted, g.reason, float(pol.cfg.get("approval", {}).get("timeout_s", 600)))
+            decisions = interrupt({"type": "approval_request", "thread_id": tid,
+                                   "approvals": [public(r) for r in recs.values()]})
+            # --- resumed: apply the human's decisions ---
+            used = dict(state["used"])
+            used["started"] += max(0.0, time.time() - min(r["created"] for r in recs.values()))  # waiting is not task time
+            out["used"] = used
+            edited: dict[str, dict[str, Any]] = {}
+            for a in ask:
+                c, g, meta = a["call"], a["gate"], a["meta"]
+                cid, rec = c["id"], recs[c["id"]]
+                raw = decisions.get(cid) if isinstance(decisions, dict) else None
+                d: dict[str, Any] = raw if isinstance(raw, dict) else {}
+                action = d.get("action")
+                if kill.engaged:
+                    approvals.resolve(tid, cid, "killed")
+                    deny(cid, "killed", "DENIED: the kill switch is engaged", g.tier)
+                elif time.time() > rec["expires_at"]:
+                    approvals.resolve(tid, cid, "expired")
+                    deny(cid, "timeout", "REJECTED: the approval request expired unanswered", g.tier, "success")
+                elif action not in ("approve", "edit"):
+                    approvals.resolve(tid, cid, "rejected")
+                    why = str(d.get("feedback") or "no reason given") if d else "no decision"
+                    deny(cid, "rejected", f"REJECTED by the user: {why[:500]}", g.tier, "success")
+                elif g.confirm and not d.get("confirm"):
+                    approvals.resolve(tid, cid, "rejected")
+                    deny(cid, "rejected", "REJECTED: this dangerous action needs an explicit confirmation", g.tier, "success")
+                else:
+                    args = c["args"]
+                    if action == "edit":
+                        new = valid_args(c["name"], d.get("args"))
+                        try:
+                            g2 = pol.evaluate(c["name"], meta, new, tainted) if new is not None else None
+                        except Exception:  # noqa: BLE001
+                            g2 = None
+                        # the human approved a specific risk level: an edit may not change it (up OR down)
+                        if new is None or g2 is None or g2.action == "deny" or (g2.tier, g2.confirm) != (g.tier, g.confirm):
+                            approvals.resolve(tid, cid, "rejected")
+                            deny(cid, "rejected", "REJECTED: the edited arguments are invalid, not allowed, or change the "
+                                 "risk tier - ask again with the new arguments", g.tier, "success")
+                            continue
+                        args, edited[cid] = new, new
+                    scope = meta.scope_fn(args) if meta and meta.scope_fn else None
+                    if d.get("remember") and g.tier == "T2" and not tainted and not g.confirm and scope:
+                        approvals.add_rule(c["name"], scope)
+                    approvals.resolve(tid, cid, "approved")
+                    run(cid, "edited" if action == "edit" else "approved", g.tier)
+            if edited:  # same message id -> add_messages replaces it, so the tools node sees the edited args
+                out["messages"] = [ai.model_copy(update={"tool_calls": [
+                    {**c, "args": edited.get(c["id"], c["args"])} for c in calls]})]
+        return out
+
     async def guard(request: Any, execute: Callable[[Any], Awaitable[Any]]) -> Any:
+        """Execute only what `gate` allowed (default deny), audit everything, offload big outputs."""
         call = request.tool_call
-        d = pol.authorize(call["name"] if request.tool else None, meta_for(call["name"]))
-        if not d.allowed:
-            return ToolMessage(content=f"DENIED by policy: {d.reason}", name=call["name"],
-                               tool_call_id=call["id"], status="error")
-        out = await execute(request)
-        if isinstance(out, ToolMessage) and isinstance(out.content, str) and len(out.content) > cfg.context.offload_chars:
-            aid = store_artifact(out.content)
-            out.content = (f"{digest(out.content)}\n[full output stored as artifact {aid}; "
+        entry = (request.state.get("gate") or {}).get(str(call["id"]))
+        meta = meta_for(call["name"])
+        if entry is None or entry["action"] != "run" or kill.engaged:
+            e = entry if entry and entry["action"] != "run" else {
+                "decision": "killed" if kill.engaged else "denied_policy", "tier": "T3", "thread": "?", "status": "error",
+                "message": "DENIED: the kill switch is engaged" if kill.engaged else "DENIED: no policy decision for this call"}
+            audit.log(e["thread"], call["id"], call["name"], call["args"], e["tier"], e["decision"], e["message"])
+            return ToolMessage(content=e["message"], name=call["name"], tool_call_id=call["id"], status=e["status"])
+        try:
+            out = await execute(request)
+        except Exception as ex:
+            audit.log(entry["thread"], call["id"], call["name"], call["args"], entry["tier"], entry["decision"],
+                      f"EXCEPTION {type(ex).__name__}")
+            raise
+        text = out.content if isinstance(out, ToolMessage) and isinstance(out.content, str) else ""
+        audit.log(entry["thread"], call["id"], call["name"], call["args"], entry["tier"], entry["decision"], text)
+        if text and len(text) > cfg.context.offload_chars and meta is not None:
+            aid = store_artifact(text)
+            out.content = (f"{digest(text)}\n[full output stored as artifact {aid}; "
                            f"use artifact_read(artifact_id='{aid}', offset=N) for more]")
         return out
 
@@ -180,17 +340,23 @@ def build_graph(
         ai = msgs[len(msgs) - len(tail) - 1]
         used = dict(state["used"])
         used["tool_calls"] += len(tail)
+        plan = state.get("gate") or {}
+        # anything that ran and may carry attacker-controlled text taints the task: later side effects need approval
+        taints = state.get("tainted") or any(
+            (m_ := meta_for(m.name or "")) is not None and m_.untrusted_output and plan.get(m.tool_call_id, {}).get("action") == "run"
+            for m in tail)
         failed = sum(is_failure(m) for m in tail)
         used["fails"] = used["fails"] + failed if failed == len(tail) else 0
         used["sigs"] = [*used["sigs"], *(signature(c) for c in getattr(ai, "tool_calls", []))][-12:]
         if r := exceeded(used, B):
-            return {"used": used, "stop_reason": r}
+            return {"used": used, "stop_reason": r, "tainted": bool(taints)}
         if repeating(used["sigs"]):
             note = "No progress: the same tool call was repeated. Change approach instead of repeating it."
             if state.get("goal") and state["replans"] < B.max_replans:
-                return {"used": {**used, "sigs": []}, "verdict": "replan", "notes": note, "replans": state["replans"] + 1}
-            return {"used": used, "stop_reason": "no_progress", "notes": note}
-        return {"used": used}
+                return {"used": {**used, "sigs": []}, "verdict": "replan", "notes": note,
+                        "replans": state["replans"] + 1, "tainted": bool(taints)}
+            return {"used": used, "stop_reason": "no_progress", "notes": note, "tainted": bool(taints)}
+        return {"used": used, "tainted": bool(taints)}
 
     async def verify(state: AgentState) -> dict[str, Any]:
         if r := halt(state):
@@ -260,7 +426,7 @@ def build_graph(
         if stopped(s):
             return "respond"
         if getattr(s["messages"][-1], "tool_calls", None):
-            return "tools"
+            return "gate"
         return "verify" if s.get("goal") else "respond"
 
     def after_account(s: AgentState) -> str:
@@ -275,16 +441,18 @@ def build_graph(
 
     g = StateGraph(AgentState)
     for name, fn in [("ingest", ingest), ("classify", classify), ("clarify", clarify), ("plan", plan),
-                     ("compact", compact), ("agent", agent), ("account", account), ("verify", verify),
-                     ("respond", respond)]:
+                     ("compact", compact), ("agent", agent), ("account", account),
+                     ("verify", verify), ("respond", respond)]:
         g.add_node(name, fn)
+    g.add_node("gate", gate)
     g.add_node("tools", ToolNode(tools, awrap_tool_call=guard, handle_tool_errors=True))
     g.add_edge(START, "ingest")
     g.add_conditional_edges("ingest", after_ingest, ["classify", "respond"])
     g.add_conditional_edges("classify", after_classify, ["clarify", "compact", "plan", "respond"])
     g.add_conditional_edges("plan", after_plan, ["compact", "respond"])
     g.add_edge("compact", "agent")
-    g.add_conditional_edges("agent", after_agent, ["tools", "verify", "respond"])
+    g.add_conditional_edges("agent", after_agent, ["gate", "verify", "respond"])
+    g.add_edge("gate", "tools")
     g.add_edge("tools", "account")
     g.add_conditional_edges("account", after_account, ["plan", "compact", "respond"])
     g.add_conditional_edges("verify", after_verify, ["compact", "plan", "respond"])

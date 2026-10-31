@@ -1,4 +1,8 @@
-"""Minimal terminal chat client: `agent-chat [--thread ID]`. Commands: /usage, /name <new name>, /exit."""
+"""Terminal chat client: `agent-chat [--thread ID]`.
+
+Commands: /usage, /name <new name>, /audit, /rules, /kill, /resume-kill, /exit.
+When the agent needs approval, a card is shown: [y]es, [n]o (optionally with a reason), [e]dit, [r]emember (yes + never ask again for that scope).
+"""
 
 from __future__ import annotations
 
@@ -12,9 +16,10 @@ from websockets.asyncio.client import ClientConnection, connect
 from personal_agent.settings.secrets import get_api_token
 from personal_agent.settings.settings import load_settings
 
+TERMINAL = {"final", "error", "usage", "agent_name", "paused", "audit", "rules", "killed", "kill_released", "approvals"}
 
-def show(ev: dict[str, Any]) -> bool:
-    """Print one event; True when the turn is over."""
+
+def show(ev: dict[str, Any]) -> None:
     t = ev["type"]
     if t == "intent":
         print(f"  [intent] {ev['intent']} (confidence {ev['confidence']:.2f}, plan={ev['needs_plan']})")
@@ -32,30 +37,77 @@ def show(ev: dict[str, Any]) -> bool:
         u = ev.get("used") or {}
         print(f"agent> {ev['text']}")
         print(f"  (steps={u.get('steps')}, tools={u.get('tool_calls')}, tokens={u.get('tokens')}, ~${(u.get('cost') or 0):.4f})")
-        return True
     elif t == "usage":
         print(f"  today: {ev['today']}  caps: {ev['caps']}")
-        return True
     elif t == "agent_name":
         print(f"  agent renamed to {ev['name']}")
-        return True
+    elif t in ("audit", "rules", "approvals"):
+        for it in ev["items"]:
+            print("  ", {k: v for k, v in it.items() if k != "preview"})
+    elif t == "killed":
+        print(f"  KILL SWITCH ENGAGED ({ev['threads']} thread(s) stopped). Use /resume-kill to re-enable.")
+    elif t == "kill_released":
+        print("  kill switch released")
     elif t == "error":
         print(f"error ({ev['code']}): {ev['message']}")
-        return True
-    return False
+
+
+def card(a: dict[str, Any]) -> None:
+    print(f"\n  APPROVAL NEEDED  [{a['tier']} / risk {a['risk']}]  {a['tool']}")
+    print(f"  why: {a['reason']}{'  (UNTRUSTED CONTENT SEEN)' if a['tainted'] else ''}")
+    print(f"  args: {a['args']}")
+    for line in str(a["preview"]).splitlines()[:40]:
+        print(f"  | {line}")
+
+
+async def decide(approvals: list[dict[str, Any]]) -> dict[str, Any]:
+    decisions: dict[str, Any] = {}
+    for a in approvals:
+        card(a)
+        ans = (await asyncio.to_thread(input, "  approve? [y]es / [n]o / [e]dit / [r]emember: ")).strip().lower()
+        if ans in ("y", "yes", "r", "remember"):
+            d: dict[str, Any] = {"action": "approve", "remember": ans.startswith("r")}
+            if a["tier"] == "T3":
+                d["confirm"] = (await asyncio.to_thread(input, "  type CONFIRM to proceed: ")).strip() == "CONFIRM"
+            decisions[a["call_id"]] = d
+        elif ans in ("e", "edit"):
+            raw = await asyncio.to_thread(input, "  new args as JSON: ")
+            try:
+                decisions[a["call_id"]] = {"action": "edit", "args": json.loads(raw)}
+            except json.JSONDecodeError:
+                decisions[a["call_id"]] = {"action": "reject", "feedback": "invalid JSON for edited arguments"}
+        else:
+            why = (await asyncio.to_thread(input, "  reason (optional, the agent will see it): ")).strip()
+            decisions[a["call_id"]] = {"action": "reject", "feedback": why}
+    return decisions
 
 
 async def exchange(ws: ClientConnection, payload: dict[str, Any]) -> None:
     await ws.send(json.dumps(payload))
-    while not show(json.loads(await ws.recv())):
-        pass
+    requests: list[dict[str, Any]] = []
+    while True:
+        ev = json.loads(await ws.recv())
+        if ev["type"] == "approval_request":
+            requests += ev["approvals"]
+            continue
+        show(ev)
+        if ev["type"] == "paused":
+            payload = {"type": "approve", "thread_id": ev["thread_id"], "decisions": await decide(requests)}
+            requests = []
+            await ws.send(json.dumps(payload))
+        elif ev["type"] in TERMINAL:
+            return
 
 
 async def chat(thread: str) -> None:
     s = load_settings().server
     headers = {"Authorization": f"Bearer {get_api_token()}"}
     async with connect(f"ws://{s.host}:{s.port}/ws", additional_headers=headers) as ws:
-        print(f"connected (thread '{thread}'). Commands: /usage, /name <name>, /exit")
+        first = json.loads(await ws.recv())  # pending approvals from before (survive UI restarts)
+        print(f"connected (thread '{thread}'). Commands: /usage /name <n> /audit /rules /kill /resume-kill /exit")
+        if first.get("items"):
+            print(f"  {len(first['items'])} approval(s) are still pending - ask the agent about that thread or reject them.")
+            show(first)
         while True:
             try:
                 text = (await asyncio.to_thread(input, "you> ")).strip()
@@ -65,8 +117,9 @@ async def chat(thread: str) -> None:
                 return
             if not text:
                 continue
-            if text == "/usage":
-                await exchange(ws, {"type": "usage"})
+            simple = {"/usage": "usage", "/audit": "audit", "/rules": "rules", "/kill": "kill", "/resume-kill": "release_kill"}
+            if text in simple:
+                await exchange(ws, {"type": simple[text]})
             elif text.startswith("/name "):
                 await exchange(ws, {"type": "set_agent_name", "name": text[6:]})
             else:

@@ -35,4 +35,4 @@ def artifact_read(artifact_id: str, offset: int = 0, length: int = 6000) -> str:
     return cap(text[max(0, offset): max(0, offset) + max(1, min(length, 20_000))])
 
 
-register(artifact_read, ToolMeta(tier="T0"))
+register(artifact_read, ToolMeta(tier="T0", untrusted_output=True))
