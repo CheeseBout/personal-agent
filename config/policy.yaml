@@ -23,7 +23,15 @@ commands:
                   'schtasks', 'vssadmin', 'diskpart', 'bcdedit', 'takeown', 'cipher\s+/w', 'Stop-Computer',
                   'Restart-Computer', '\bshutdown\b']
 network:
-  domain_allowlist: []
+  domain_allowlist: []    # empty = any PUBLIC host (private/loopback/metadata addresses are always blocked); set to restrict
+# APIs the agent may call with http_request. It names a secret; the tool injects the value (never shown to the model):
+#   http:
+#     hosts:
+#       api.example.com:
+#         secrets:
+#           EXAMPLE_API_KEY: {header: Authorization, prefix: 'Bearer '}   # value from .env / Credential Manager
+http:
+  hosts: {}
 rate_limits:
   per_tool_per_minute: 30
 sandbox:

@@ -124,6 +124,8 @@ class Staging:
             if visited > limit:
                 raise ValueError(f"the sandbox produced more than {limit} files; refusing to review them")
             rel = f.relative_to(self.work).as_posix()
+            if rel.startswith(".scratch/"):
+                continue  # run_python's temporary scripts are not part of the reviewable result
             seen.add(rel)
             if rel in manifest:
                 if f.stat().st_size <= self._max_bytes and _sha(f) == manifest[rel]["sha"]:

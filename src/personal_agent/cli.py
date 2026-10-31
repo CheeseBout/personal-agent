@@ -16,7 +16,8 @@ from websockets.asyncio.client import ClientConnection, connect
 from personal_agent.settings.secrets import get_api_token
 from personal_agent.settings.settings import load_settings
 
-TERMINAL = {"final", "error", "usage", "agent_name", "paused", "audit", "rules", "killed", "kill_released", "approvals"}
+TERMINAL = {"final", "error", "usage", "agent_name", "paused", "audit", "rules", "killed", "kill_released", "approvals",
+            "memory", "memory_updated", "memory_deleted", "rag", "schedules", "schedule_cancel", "mcp", "mcp_set"}
 
 
 def show(ev: dict[str, Any]) -> None:
@@ -44,6 +45,22 @@ def show(ev: dict[str, Any]) -> None:
     elif t in ("audit", "rules", "approvals"):
         for it in ev["items"]:
             print("  ", {k: v for k, v in it.items() if k != "preview"})
+    elif t == "memory":
+        for m in ev["items"]:
+            print(f"  #{m['id']} [{m['kind']}/{m['status']}{' SENSITIVE' if m['sensitive'] else ''}] {m['text'][:110]}")
+        print("  (none)" if not ev["items"] else "")
+    elif t in ("memory_updated", "memory_deleted", "mcp_set", "schedule_cancel"):
+        print(f"  ok={ev.get('ok')}" + ("  (run /mcp-reload to apply)" if t == "mcp_set" else ""))
+    elif t == "rag":
+        for d in ev["items"]:
+            print(f"  {d['source']} ({d['kind']}, {d['chunks']} chunks)")
+        print(f"  watching={ev['watching']} paused={ev['paused']}")
+    elif t == "schedules":
+        for j in ev["items"]:
+            print(f"  #{j['id']} enabled={j['enabled']} every_s={j['every_s']} last={j['last_status']} | {j['prompt'][:70]}")
+    elif t == "mcp":
+        for n, sv in ev["servers"].items():
+            print(f"  {n}: {sv}")
     elif t == "killed":
         print(f"  KILL SWITCH ENGAGED ({ev['threads']} thread(s) stopped). Use /resume-kill to re-enable.")
     elif t == "kill_released":
@@ -104,7 +121,8 @@ async def chat(thread: str) -> None:
     headers = {"Authorization": f"Bearer {get_api_token()}"}
     async with connect(f"ws://{s.host}:{s.port}/ws", additional_headers=headers) as ws:
         first = json.loads(await ws.recv())  # pending approvals from before (survive UI restarts)
-        print(f"connected (thread '{thread}'). Commands: /usage /name <n> /audit /rules /kill /resume-kill /exit")
+        print(f"connected (thread '{thread}'). Commands: /usage /name <n> /audit /rules /kill /resume-kill /memory "
+              "/memory-ok <id> /memory-del <id> /rag /schedules /schedule-cancel <id> /mcp /mcp-reload /exit")
         if first.get("items"):
             print(f"  {len(first['items'])} approval(s) are still pending - ask the agent about that thread or reject them.")
             show(first)
@@ -122,6 +140,20 @@ async def chat(thread: str) -> None:
                 await exchange(ws, {"type": simple[text]})
             elif text.startswith("/name "):
                 await exchange(ws, {"type": "set_agent_name", "name": text[6:]})
+            elif text in ("/memory", "/rag", "/schedules", "/mcp", "/mcp-reload"):
+                kind = {"/memory": "memory_list", "/rag": "rag_list", "/schedules": "schedules", "/mcp": "mcp_list",
+                        "/mcp-reload": "mcp_reload"}[text]
+                await exchange(ws, {"type": kind})
+            elif text.startswith(("/memory-ok ", "/memory-del ", "/schedule-cancel ")):
+                cmd, _, arg = text.partition(" ")
+                if not arg.strip().isdigit():
+                    print("  usage: " + cmd + " <number>")
+                    continue
+                n = int(arg)
+                payload = {"/memory-ok": {"type": "memory_update", "id": n, "status": "active"},
+                           "/memory-del": {"type": "memory_delete", "id": n},
+                           "/schedule-cancel": {"type": "schedule_cancel", "id": n}}[cmd]
+                await exchange(ws, payload)
             else:
                 await exchange(ws, {"type": "user", "thread_id": thread, "text": text})
 

@@ -40,6 +40,21 @@ budgets:                  # per task
   max_verifications: 4
   daily_max_tokens: 1000000   # across ALL tasks, persisted; checked before every LLM call
   daily_max_cost_usd: 2.00
+rag:
+  embedding: {provider: google, model: gemini-embedding-001, dim: 768}   # OpenAI key had no credit; see docs/phase4.md
+  chunk_chars: 900
+  overlap_chars: 120
+  top_k: 5
+  watch: []               # e.g. ['%USERPROFILE%\Documents\agent-workspace\docs'] - must be inside paths.allow
+memory:
+  reflect: true           # after planned tasks, propose memories (one cheap Haiku call)
+  auto_k: 5               # memories injected into the prompt at task start (local search, no API call)
+  half_life_days: 90
+  min_auto_confidence: 0.7
+scheduler:
+  max_jobs: 20
+  min_interval_minutes: 5
+  grace_minutes: 60
 brain:
   min_confidence: 0.55    # below this the agent asks one clarifying question
 context:

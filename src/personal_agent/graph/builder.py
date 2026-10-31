@@ -26,6 +26,7 @@ from langgraph.prebuilt import ToolNode
 from langgraph.types import Command, interrupt
 from pydantic import BaseModel
 
+from personal_agent import services
 from personal_agent.graph.brain import Brain, LiveBrain
 from personal_agent.graph.context import (
     build_prompt,
@@ -40,7 +41,10 @@ from personal_agent.graph.lang import detect_lang
 from personal_agent.graph.limits import charge, exceeded, is_failure, new_used, repeating, signature
 from personal_agent.graph.report import build_report
 from personal_agent.graph.schemas import AgentState, Goal, Intent, Verdict
+from personal_agent.memory.reflect import REFLECT_PROMPT, Reflection, save_reflection
+from personal_agent.memory.store import MemoryStore
 from personal_agent.observability.audit import AuditLog
+from personal_agent.observability.logging import redact
 from personal_agent.observability.usage import Meter
 from personal_agent.policy.approvals import ApprovalStore
 from personal_agent.policy.killswitch import KillSwitch
@@ -49,6 +53,7 @@ from personal_agent.tools.artifacts import store_artifact
 from personal_agent.tools.registry import load_tools, meta_for, policy
 
 log = structlog.get_logger()
+MAX_TOOL_CHARS = 200_000
 
 CLASSIFY_PROMPT ="""Classify the user's latest request for a personal assistant on Windows.
 Be economical: simple chat or a question answerable from knowledge/one lookup -> intent chat|question,
@@ -91,8 +96,10 @@ def build_graph(
     audit: AuditLog | None = None,
     approvals: ApprovalStore | None = None,
     kill: KillSwitch | None = None,
+    memory: MemoryStore | None = None,
 ) -> Any:
     cfg = settings or load_settings()
+    mem = memory or services.memory()
     brain = brain or LiveBrain(cfg)
     meter = meter or Meter(data_dir() / "usage.db", cfg.pricing)
     audit = audit or AuditLog(data_dir() / "audit.db")
@@ -117,6 +124,13 @@ def build_graph(
     def halt(state: AgentState) -> str | None:
         return "killed" if kill.engaged else exceeded(state["used"], B) or meter.daily_exceeded(B)
 
+    def recall_for(text: str) -> str:
+        try:  # memory is a convenience: it must never break a turn
+            return mem.for_prompt(text, cfg.memory.auto_k)
+        except Exception:
+            log.exception("memory_recall_failed")
+            return ""
+
     # ---- nodes -------------------------------------------------------------------------------
     async def ingest(state: AgentState) -> dict[str, Any]:
         text = text_of(state["messages"][-1].content)
@@ -126,7 +140,7 @@ def build_graph(
         return {"lang": lang, "intent": None, "goal": None, "notes": "", "verdict": "", "replans": 0,
                 # `tainted` is deliberately NOT reset: untrusted text stays in the thread history, so it can keep
                 # steering later turns. Start a new thread to get a clean slate.
-                "final": "", "used": new_used(), "gate": {},
+                "final": "", "used": new_used(), "gate": {}, "memories": recall_for(text),
                 "stop_reason": "killed" if kill.engaged else meter.daily_exceeded(B) or ""}
 
     async def classify(state: AgentState) -> dict[str, Any]:
@@ -227,6 +241,9 @@ def build_graph(
             if kill.engaged:
                 deny(c["id"], "killed", "DENIED: the kill switch is engaged")
                 continue
+            if meta is not None and meta.attended_only and tid.startswith("sched-"):
+                deny(c["id"], "denied_policy", "DENIED: this tool cannot be used in an unattended (scheduled) run")
+                continue
             try:
                 g = pol.evaluate(c["name"], meta, c["args"], tainted)
             except Exception:
@@ -322,6 +339,9 @@ def build_graph(
             audit.log(entry["thread"], call["id"], call["name"], call["args"], entry["tier"], entry["decision"],
                       f"EXCEPTION {type(ex).__name__}")
             raise
+        if isinstance(out, ToolMessage) and isinstance(out.content, str):
+            # Built-in tools already redact and cap; external ones (MCP) do not: do it for everything, here
+            out.content = redact(out.content)[:MAX_TOOL_CHARS]
         text = out.content if isinstance(out, ToolMessage) and isinstance(out.content, str) else ""
         audit.log(entry["thread"], call["id"], call["name"], call["args"], entry["tier"], entry["decision"], text)
         if text and len(text) > cfg.context.offload_chars and meta is not None:
@@ -402,7 +422,28 @@ def build_graph(
             return {"final": last_ai_text(state["messages"])}
         return {"final": text, "messages": [AIMessage(text)]}
 
+    async def memory_reflect(state: AgentState, config: RunnableConfig) -> dict[str, Any]:
+        """After a planned task: ask the cheap model what is worth remembering, then save/propose it."""
+        if halt(state):
+            return {}
+        ask = (f"Request: {user_request(state['messages'])}\nGoal: {(state.get('goal') or {}).get('objective', '')}\n"
+               f"Outcome: {state.get('final', '')[:800]}\nVerdict: {state.get('verdict') or state.get('stop_reason') or 'done'}\n"
+               f"Notes: {state.get('notes', '')[:300]}")
+        try:
+            parsed, used = await structured("summarizer", Reflection, [SystemMessage(REFLECT_PROMPT), HumanMessage(ask)], state["used"])
+            if parsed is not None:
+                save_reflection(mem, parsed, f"task:{config['configurable']['thread_id']}", bool(state.get("tainted")),
+                                cfg.memory.min_auto_confidence)
+            return {"used": used}
+        except Exception:
+            log.exception("memory_reflect_failed")
+            return {}
+
     # ---- routing -----------------------------------------------------------------------------
+    def after_respond(s: AgentState) -> str:
+        skip = s.get("stop_reason") in ("killed", "daily_tokens", "daily_cost")  # no model calls allowed
+        return "memory_reflect" if cfg.memory.reflect and s.get("goal") and not skip else END
+
     def stopped(s: AgentState) -> bool:
         return bool(s["stop_reason"])
 
@@ -456,6 +497,8 @@ def build_graph(
     g.add_edge("tools", "account")
     g.add_conditional_edges("account", after_account, ["plan", "compact", "respond"])
     g.add_conditional_edges("verify", after_verify, ["compact", "plan", "respond"])
+    g.add_node("memory_reflect", memory_reflect)
     g.add_edge("clarify", END)
-    g.add_edge("respond", END)
+    g.add_conditional_edges("respond", after_respond, ["memory_reflect", END])
+    g.add_edge("memory_reflect", END)
     return g.compile(checkpointer=checkpointer)

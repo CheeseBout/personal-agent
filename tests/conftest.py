@@ -4,6 +4,9 @@ from pathlib import Path
 import pytest
 import yaml
 
+from fakes import HashEmbedder
+from personal_agent import services
+from personal_agent.services import reset_services
 from personal_agent.settings.settings import load_settings
 from personal_agent.tools.registry import policy
 from personal_agent.tools.sandbox_tools import reset_singletons
@@ -27,4 +30,8 @@ def env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     load_settings.cache_clear()
     policy.cache_clear()
     reset_singletons()
+    reset_services()
+    emb = HashEmbedder()  # tests never reach a real embedding provider
+    monkeypatch.setattr(services, "embedder", lambda: emb)
+    monkeypatch.setattr(services, "FAKE_EMBEDDER", emb, raising=False)
     return ws

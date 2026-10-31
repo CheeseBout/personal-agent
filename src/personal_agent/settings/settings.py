@@ -62,8 +62,38 @@ class ContextCfg(BaseModel):
     offload_chars: int = 6000
 
 
+class EmbeddingCfg(BaseModel):
+    provider: str = "google"  # google | openai | local (fastembed, optional extra)
+    model: str = "gemini-embedding-001"
+    dim: int = 768
+
+
+class RagCfg(BaseModel):
+    embedding: EmbeddingCfg = Field(default_factory=EmbeddingCfg)
+    chunk_chars: int = 900
+    overlap_chars: int = 120
+    top_k: int = 5
+    watch: list[str] = Field(default_factory=list)  # folders (must be inside the allowed paths)
+
+
+class MemoryCfg(BaseModel):
+    reflect: bool = True
+    auto_k: int = 5
+    half_life_days: float = 90.0
+    min_auto_confidence: float = 0.7
+
+
+class SchedulerCfg(BaseModel):
+    max_jobs: int = 20
+    min_interval_minutes: int = 5
+    grace_minutes: int = 60  # a run missed while the daemon was down is still run if it is this recent
+
+
 class Settings(BaseModel):
     agent: AgentCfg = Field(default_factory=AgentCfg)
+    rag: RagCfg = Field(default_factory=RagCfg)
+    memory: MemoryCfg = Field(default_factory=MemoryCfg)
+    scheduler: SchedulerCfg = Field(default_factory=SchedulerCfg)
     server: ServerCfg = Field(default_factory=ServerCfg)
     models: dict[str, ModelSpec] = Field(default_factory=dict)
     pricing: dict[str, Price] = Field(default_factory=dict)

@@ -38,6 +38,7 @@ class ToolMeta:
     network: bool = False
     untrusted_output: bool = False  # result may contain attacker-controlled text -> taints the task
     risk: str = "medium"  # shown on the approval card: low | medium | high
+    attended_only: bool = False  # never allowed in unattended (scheduled) runs, e.g. creating more schedules
     tier_fn: Callable[[dict[str, Any]], str] | None = None  # tier depends on the arguments
     preview_fn: Callable[[dict[str, Any]], str] | None = None  # read-only preview/diff for the approval card
     scope_fn: Callable[[dict[str, Any]], str | None] | None = None  # "approve and remember" scope; None = never remember

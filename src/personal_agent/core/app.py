@@ -4,6 +4,7 @@ the kill switch can be received while a turn is running or paused."""
 from __future__ import annotations
 
 import asyncio
+import os
 import re
 import secrets
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
@@ -17,6 +18,7 @@ from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 from langgraph.errors import GraphRecursionError
 
+from personal_agent import mcp_client, services
 from personal_agent.graph.brain import Brain
 from personal_agent.graph.builder import build_graph, resume_command
 from personal_agent.graph.context import text_of
@@ -27,9 +29,11 @@ from personal_agent.observability.logging import redact, redact_obj
 from personal_agent.observability.usage import Meter
 from personal_agent.policy.approvals import ApprovalStore
 from personal_agent.policy.killswitch import KillSwitch
+from personal_agent.rag.watch import FolderWatcher
 from personal_agent.settings.secrets import get_api_token
 from personal_agent.settings.settings import data_dir, load_settings, set_agent_name
 from personal_agent.tools import procs
+from personal_agent.tools.registry import policy
 
 log = structlog.get_logger()
 _THREAD_ID = re.compile(r"^[\w\-]{1,64}$")
@@ -68,14 +72,71 @@ def create_app(brain: Brain | None = None, db_path: Path | None = None, token: s
         s.active_threads = set()
         s.turn_lock = asyncio.Lock()  # one task at a time: exact daily cap, no interleaving on a thread
         s.token = token or get_api_token()
+        s.clients = set()  # connected UIs: scheduled runs and pending approvals are pushed to them
+        s.mcp_status = await mcp_client.load_tools() if mcp_client.read_config()["servers"] else {}
+        s.watcher = start_watcher()
         async with AsyncSqliteSaver.from_conn_string(str(db_path or data_dir() / "checkpoints.db")) as saver:
-            s.graph = build_graph(saver, brain, settings, s.meter, s.audit, s.approvals, s.kill)
+            s.make_graph = lambda: build_graph(saver, brain, settings, s.meter, s.audit, s.approvals, s.kill)
+            s.graph = s.make_graph()
+            sched = services.scheduler()
+            sched.run_job = run_scheduled
+            sched.start()
             log.info("daemon_ready")
             yield
+            await sched.stop()
             for t in list(s.tasks):
                 t.cancel()
             await asyncio.gather(*s.tasks, return_exceptions=True)
+        if s.watcher:
+            s.watcher.stop()
+        mcp_client.unload()
         sandbox().stop()
+
+    def start_watcher() -> FolderWatcher | None:
+        folders = [Path(os.path.expandvars(f)) for f in settings.rag.watch]
+        ok = [f for f in folders if policy().check_path(f).allowed and f.is_dir()]
+        for f in set(folders) - set(ok):
+            log.warning("rag_watch_skipped", folder=str(f), reason="not an existing folder inside the allowed paths")
+        if not ok:
+            return None
+        w = FolderWatcher(ok, lambda folder: services.rag().sync_folder(folder, lambda p: policy().check_path(p).allowed))
+        w.start()
+        return w
+
+    async def broadcast(ev: dict[str, Any]) -> None:
+        for send in list(app.state.clients):
+            await send(ev)
+
+    async def run_scheduled(job: dict[str, Any]) -> str:
+        """Run a due schedule as a normal turn on its own thread (same policy/approvals/budgets)."""
+        s = app.state
+        tid = f"sched-{job['id']}"
+        if s.kill.engaged:
+            return "skipped: the kill switch is engaged"
+        if s.approvals.pending(tid):
+            return "skipped: the previous run is still waiting for your approval"
+        events: list[dict[str, Any]] = []
+
+        async def sink(ev: dict[str, Any]) -> None:
+            events.append(ev)
+            if ev["type"] in ("approval_request", "paused", "error"):
+                await broadcast(ev)  # the user must see (and can answer) approval cards from unattended runs
+
+        async with s.turn_lock:
+            s.active_threads.add(tid)
+            try:
+                await run_turn({"thread_id": tid, "text": f"[scheduled task #{job['id']}] {job['prompt']}"}, "user", sink)
+            finally:
+                s.active_threads.discard(tid)
+        last = events[-1] if events else {"type": "error", "code": "no_result"}
+        if last["type"] == "final":
+            status = "ok: " + str(last.get("text", ""))[:120]
+        elif last["type"] == "paused":
+            status = "waiting for your approval"
+        else:
+            status = f"error: {last.get('code', last['type'])}"
+        await broadcast({"type": "schedule_run", "id": job["id"], "status": status})
+        return status
 
     app = FastAPI(lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
 
@@ -126,12 +187,57 @@ def create_app(brain: Brain | None = None, db_path: Path | None = None, token: s
                 log.debug("client_gone")
 
         await send({"type": "approvals", "items": app.state.approvals.pending()})  # pending ones survive UI restarts
+        app.state.clients.add(send)
         try:
             while True:
                 msg = await ws.receive_json()
                 await handle(msg, send)
         except WebSocketDisconnect:
             return
+        finally:
+            app.state.clients.discard(send)
+
+    MANAGE = {"memory_list", "memory_update", "memory_delete", "rag_list", "rag_pause", "rag_resume", "rag_sync",
+              "mcp_list", "mcp_set", "mcp_reload", "schedules", "schedule_cancel"}
+
+    async def manage(kind: str, msg: dict[str, Any]) -> dict[str, Any]:
+        """Management calls behind the Memory / RAG / MCP / Schedule pages (the UI arrives in Phase 7)."""
+        s = app.state
+        mem, rag = services.memory(), services.rag()
+        if kind == "memory_list":
+            return {"type": "memory", "items": mem.items(msg.get("status"), msg.get("kind"))}
+        if kind == "memory_update":  # edit text and/or approve a proposal (status=active)
+            ok = await asyncio.to_thread(mem.update, int(msg["id"]), msg.get("text"), msg.get("status"))
+            return {"type": "memory_updated", "ok": ok}
+        if kind == "memory_delete":
+            return {"type": "memory_deleted", "ok": mem.delete(int(msg["id"]))}
+        if kind == "rag_list":
+            return {"type": "rag", "items": rag.documents(), "watching": bool(s.watcher), "paused": bool(s.watcher and s.watcher.paused)}
+        if kind in ("rag_pause", "rag_resume"):
+            if s.watcher:
+                s.watcher.paused = kind == "rag_pause"
+            return {"type": "rag", "items": rag.documents(), "watching": bool(s.watcher), "paused": bool(s.watcher and s.watcher.paused)}
+        if kind == "rag_sync":
+            folders = [Path(os.path.expandvars(f)) for f in settings.rag.watch]
+            lines: list[str] = []
+            for f in folders:
+                if policy().check_path(f).allowed and f.is_dir():
+                    lines += await asyncio.to_thread(rag.sync_folder, f, lambda p: policy().check_path(p).allowed)
+            return {"type": "rag_synced", "report": lines}
+        if kind == "mcp_list":
+            return {"type": "mcp", "servers": {n: {"enabled": sp.get("enabled", True), "status": s.mcp_status.get(n, "not loaded")}
+                                               for n, sp in mcp_client.read_config()["servers"].items()}}
+        if kind == "mcp_set":
+            return {"type": "mcp_set", "ok": mcp_client.set_enabled(str(msg["name"]), bool(msg["enabled"])), "reload_needed": True}
+        if kind == "mcp_reload":
+            if s.tasks:
+                return {"type": "error", "code": "busy", "message": "finish the running task first"}
+            s.mcp_status = await mcp_client.load_tools()
+            s.graph = s.make_graph()  # same checkpointer: threads (and pending approvals) continue
+            return {"type": "mcp", "servers": {n: {"status": st} for n, st in s.mcp_status.items()}}
+        if kind == "schedules":
+            return {"type": "schedules", "items": services.scheduler().jobs()}
+        return {"type": "schedule_cancel", "ok": services.scheduler().cancel(int(msg["id"]))}
 
     async def handle(msg: Any, send: Send) -> None:
         s = app.state
@@ -153,6 +259,11 @@ def create_app(brain: Brain | None = None, db_path: Path | None = None, token: s
         elif kind == "forget_rule":
             ok = s.approvals.delete_rule(int(msg.get("id", -1)))
             await send({"type": "rules", "items": s.approvals.rules(), "deleted": ok})
+        elif isinstance(kind, str) and kind in MANAGE:
+            try:
+                await send(await manage(kind, msg))
+            except (ValueError, TypeError, KeyError) as e:
+                await send({"type": "error", "code": "bad_request", "message": str(e)[:200]})
         elif kind == "set_agent_name":
             try:
                 set_agent_name(settings, str(msg.get("name", "")))

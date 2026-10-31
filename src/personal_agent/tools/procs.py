@@ -21,14 +21,15 @@ def _kill_tree(p: subprocess.Popen[bytes]) -> None:
     p.kill()
 
 
-def run(cmdline: list[str], cwd: Path, timeout: float) -> tuple[int, bytes, bytes]:
+def run(cmdline: list[str], cwd: Path, timeout: float, input_data: bytes | None = None) -> tuple[int, bytes, bytes]:
     with _lock:  # check-and-start is atomic with kill_all(): no process can slip in after a kill
         if _stopped:
             raise KillSwitchEngaged
-        p = subprocess.Popen(cmdline, cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        p = subprocess.Popen(cmdline, cwd=cwd, stdin=subprocess.PIPE if input_data is not None else None,
+                             stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         _procs.add(p)
     try:
-        out, err = p.communicate(timeout=timeout)
+        out, err = p.communicate(input=input_data, timeout=timeout)
         return p.returncode, out, err
     except subprocess.TimeoutExpired:
         _kill_tree(p)

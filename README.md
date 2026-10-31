@@ -22,6 +22,16 @@ python -m uv run mypy src
 
 The per-install API token is created on first start and stored in Credential Manager; logs go to `%APPDATA%\personal-agent\logs\`.
 
+## Phase 4: tools, knowledge and memory
+- Documents: put md/docx/pdf in the workspace, ask the agent to `rag_ingest` them (or list a folder under `rag.watch` in
+  `config/default.yaml` to keep it indexed automatically), then ask questions; answers cite file / heading / page.
+- Memory: the agent saves facts with `remember`; after planned tasks it *proposes* more. Review them with `/memory`, approve with
+  `/memory-ok <id>`, delete with `/memory-del <id>`. Nothing sensitive is stored without your approval.
+- Other tools: email (set `EMAIL_*` in `.env`), calendar (`calendar.ics` in the workspace), clipboard, web, HTTP APIs
+  (allow-list hosts under `http.hosts` in `config/policy.yaml`), MCP servers (`%APPDATA%\personal-agent\mcp.yaml`, see
+  `src/personal_agent/mcp_client.py`), scheduling (`schedule_task`, approval required). Details and limits: `docs/phase4.md`.
+- Desktop-touching tests (clipboard): `python -m uv run pytest -m desktop`.
+
 ## Phase 3: safety
 Writes, shell commands and anything touching existing files stop at an **approval card** (`y` / `n` + reason / `e` edit args /
 `r` remember for that folder). `/kill` in `agent-chat` (or `POST /kill` with the token) halts everything immediately.

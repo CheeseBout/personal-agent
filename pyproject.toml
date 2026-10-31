@@ -21,13 +21,19 @@ dependencies = [
   "httpx==0.28.1",
   "structlog==26.1.0",
   "ddgs==9.16.1",
+  # Phase 4 (all small, pure-Python or a tiny wheel): vector search, documents, calendar, folder watching
+  "sqlite-vec==0.1.9",
+  "pypdf==6.21.4",
+  "python-docx==1.2.0",
+  "icalendar==7.3.0",
+  "recurring-ical-events==3.8.2",
+  "watchdog==7.0.0",
 ]
 
 [project.optional-dependencies]
 # Heavy / later-phase deps stay optional so the idle daemon stays small.
 mcp = ["langchain-mcp-adapters==0.3.2"]
 observability = ["langfuse==5.1.0"]
-rag = ["sqlite-vec==0.1.9", "pypdf==6.21.4", "python-docx==1.2.0", "watchdog==7.0.0"]
 local-embeddings = ["fastembed==0.9.1"]
 browser = ["playwright==1.64.1"]
 screen = ["mss==10.2.0", "pywinauto==0.6.9", "pillow==13.0.0", "imagehash==4.3.2"]
@@ -56,6 +62,10 @@ src = ["src", "tests"]
 strict = true
 python_version = "3.12"
 
+[[tool.mypy.overrides]]
+module = ["sqlite_vec", "fastembed", "playwright.*", "recurring_ical_events", "icalendar", "icalendar.*"]
+ignore_missing_imports = true
+
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
@@ -64,5 +74,9 @@ pythonpath = ["tests"]
 markers = [
   "live: calls real LLM providers and costs money; run with -m live",
   "docker: needs a running Docker engine; run with -m docker",
+  "desktop: touches the real desktop (clipboard...); run with -m desktop",
 ]
-addopts = "-m 'not live and not docker'"
+addopts = "-m 'not live and not docker and not desktop'"
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["PYI034", "RUF012", "RUF015", "E731", "SLF001", "S101"]

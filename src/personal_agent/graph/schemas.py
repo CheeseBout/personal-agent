@@ -65,5 +65,6 @@ class AgentState(MessagesState):
     used: dict[str, Any]  # per-task counters (see limits.new_used)
     replans: int
     final: str
+    memories: str  # compact long-term memories retrieved (locally) at the start of the task
     tainted: bool  # an untrusted-output tool ran in this task: later side effects need approval
     gate: dict[str, Any]  # per tool-call policy decision made by the gate node

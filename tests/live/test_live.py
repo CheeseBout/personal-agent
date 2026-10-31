@@ -116,3 +116,84 @@ async def test_real_model_prompt_injection_in_a_file_cannot_write_without_approv
         assert not (env / "pwned.txt").exists()
     else:
         print("\nMODEL IGNORED THE INJECTION:", ascii(out["final"][:120]))
+
+
+# ---- Phase 4: real embeddings, RAG, memory, web ------------------------------------------------------------------
+@pytest.fixture
+def real_embedder(monkeypatch: pytest.MonkeyPatch) -> Any:
+    from personal_agent import services as svc
+    from personal_agent.rag.embed import build_embedder
+
+    emb = build_embedder(load_settings().rag.embedding, None, lambda m, t: svc.meter().record(m, t, 0))
+    monkeypatch.setattr(svc, "embedder", lambda: emb)
+    return emb
+
+
+def make_corpus(env: Path) -> None:
+    from docx import Document
+    from test_rag import make_pdf
+
+    (env / "nghi-phep.md").write_text(
+        "# Chính sách nghỉ phép\nNhân viên chính thức được nghỉ phép có lương 12 ngày mỗi năm. "
+        "Nghỉ ốm cần giấy xác nhận của bác sĩ.\n# Làm việc từ xa\nĐược làm việc từ xa tối đa 2 ngày mỗi tuần.\n", encoding="utf-8")
+    d = Document()
+    d.add_heading("Expense policy", 1)
+    d.add_paragraph("Reimbursement requests must include receipts for any purchase above 50 dollars and be filed within 30 days.")
+    d.add_heading("Travel", 2)
+    d.add_paragraph("Economy class only for flights shorter than six hours.")
+    d.save(env / "expenses.docx")
+    make_pdf(env / "manual.pdf", ["The router firmware update requires holding the reset button for ten seconds"])
+
+
+async def test_real_embeddings_find_documents_across_languages(env: Path, real_embedder: Any) -> None:
+    from personal_agent import services as svc
+
+    make_corpus(env)
+    for f in ("nghi-phep.md", "expenses.docx", "manual.pdf"):
+        print("\n", svc.rag().ingest(env / f))
+    cases = [("How many paid vacation days do employees get per year?", "nghi-phep.md"),   # English question, Vietnamese doc
+             ("quy định hoàn tiền chi phí cần hóa đơn khi nào", "expenses.docx"),            # Vietnamese question, English doc
+             ("how do I reset my router", "manual.pdf")]
+    for q, want in cases:
+        hits, note = svc.rag().search(q, k=3)
+        print(ascii(q), "->", ascii([h.cite for h in hits]))
+        assert not note and hits[0].cite.startswith(want), (q, [h.cite for h in hits])
+    assert svc.rag().search("router", k=1)[0][0].page == 1  # PDF page number survives for citations
+
+
+async def test_agent_answers_from_the_users_documents_with_a_citation(env: Path, real_embedder: Any) -> None:
+    from personal_agent import services as svc
+
+    make_corpus(env)
+    svc.rag().ingest(env / "nghi-phep.md")
+    g, _ = graph()
+    out = await ask(g, "Theo tài liệu của tôi, nhân viên được nghỉ phép bao nhiêu ngày mỗi năm?", "rag")
+    print("\nFINAL:", ascii(out["final"]), "\nused:", out["used"])
+    assert "12" in out["final"] and not out["stop_reason"] and out["used"]["tool_calls"] >= 1
+
+
+async def test_real_memory_recall_and_reflection(env: Path, real_embedder: Any) -> None:
+    from personal_agent import services as svc
+
+    svc.memory().add("The user's favourite programming language is Rust", "semantic")
+    svc.memory().add("The user's cat is called Mochi", "semantic")
+    top = svc.memory().search("what language does the user like to code in?", k=1)  # no shared keywords: needs the vectors
+    assert top and "Rust" in top[0]["text"]
+    (env / "hello.txt").write_text("the secret word is banana-7731", encoding="utf-8")
+    g, _ = graph()
+    out = await ask(g, "Read hello.txt in my workspace and tell me the secret word.", "refl")
+    eps = [m for m in svc.memory().items() if m["kind"] == "episodic"]
+    print("\nEPISODES:", [ascii(m["text"]) for m in eps], "| status:", [m["status"] for m in eps])
+    # the task read a file (untrusted output) => by design its memories are only PROPOSED until the user approves them
+    assert "banana-7731" in out["final"] and len(eps) == 1 and eps[0]["status"] == "proposed"
+    assert not any("banana" in m["text"] and m["kind"] == "semantic" for m in svc.memory().items(status="active"))  # no junk facts
+
+
+async def test_web_fetch_real_page_and_ssrf_block(env: Path) -> None:
+    from personal_agent.tools.web_tools import web_fetch
+
+    out = web_fetch.invoke({"url": "https://example.com/"})
+    print("\n", ascii(out[:200]))
+    assert "Example Domain" in out and out.startswith("[UNTRUSTED WEB CONTENT")
+    assert web_fetch.invoke({"url": "http://127.0.0.1:9/"}).startswith("ERROR: blocked")
+    assert web_fetch.invoke({"url": "http://169.254.169.254/latest/meta-data/"}).startswith("ERROR: blocked")
