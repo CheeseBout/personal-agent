@@ -10,6 +10,7 @@ from typing import Any
 
 from langchain_core.language_models import BaseChatModel
 from langchain_core.runnables import Runnable
+from pydantic import BaseModel
 
 from personal_agent.settings.secrets import get_secret
 from personal_agent.settings.settings import ModelRef, ModelSpec, Settings, load_settings
@@ -27,7 +28,7 @@ class MissingSecretError(RuntimeError):
     """No API key configured for a provider (message never contains a secret)."""
 
 
-def build_chat_model(ref: ModelRef, spec: ModelSpec | None = None) -> BaseChatModel:
+def build_chat_model(ref: ModelRef, spec: ModelSpec | None = None, retries: int = 3) -> BaseChatModel:
     if ref.provider not in KEY_NAMES:
         raise ValueError(f"unknown provider '{ref.provider}' (expected one of {sorted(KEY_NAMES)})")
     key = get_secret(KEY_NAMES[ref.provider])
@@ -36,7 +37,7 @@ def build_chat_model(ref: ModelRef, spec: ModelSpec | None = None) -> BaseChatMo
             f"No API key for provider '{ref.provider}'. Store {KEY_NAMES[ref.provider]} in Windows "
             "Credential Manager (service 'personal-agent') or set it as an environment variable."
         )
-    kw: dict[str, Any] = {"model": ref.model, "api_key": key, "max_retries": 3}
+    kw: dict[str, Any] = {"model": ref.model, "api_key": key, "max_retries": retries}
     if spec is not None:
         kw["timeout"] = spec.timeout_s
         if spec.temperature is not None:
@@ -59,23 +60,32 @@ def build_chat_model(ref: ModelRef, spec: ModelSpec | None = None) -> BaseChatMo
 
 
 def get_chat_model(
-    role: str, tools: Sequence[Any] = (), settings: Settings | None = None
+    role: str,
+    tools: Sequence[Any] = (),
+    settings: Settings | None = None,
+    schema: type[BaseModel] | None = None,
 ) -> Runnable[Any, Any]:
-    """Model for `role`, tools bound, with fallbacks (fallbacks lacking a key are skipped).
+    """Model for `role` with fallbacks (fallbacks lacking a key are skipped).
 
-    Tools are bound before fallbacks are attached because RunnableWithFallbacks has no bind_tools.
+    Tools / structured output are applied before fallbacks are attached because
+    RunnableWithFallbacks has no bind_tools. With `schema` the runnable returns
+    {"raw": AIMessage, "parsed": schema|None, "parsing_error": ...} so usage stays visible.
     """
     spec = (settings or load_settings()).models[role]
 
-    def make(ref: ModelRef) -> Runnable[Any, Any]:
-        m = build_chat_model(ref, spec)
+    def make(ref: ModelRef, retries: int = 3) -> Runnable[Any, Any]:
+        m = build_chat_model(ref, spec, retries)
+        if schema is not None:
+            # Forced tool-calling is unreliable on current Claude models; use native JSON-schema output.
+            method = "json_schema" if ref.provider == "anthropic" else None
+            return m.with_structured_output(schema, include_raw=True, **({"method": method} if method else {}))
         return m.bind_tools(list(tools)) if tools else m
 
     primary = make(spec)
     fallbacks: list[Runnable[Any, Any]] = []
     for ref in spec.fallbacks:
         try:
-            fallbacks.append(make(ref))
+            fallbacks.append(make(ref, retries=1))  # fail fast: a hung fallback is worse than an error
         except MissingSecretError:
             continue
     return primary.with_fallbacks(fallbacks) if fallbacks else primary

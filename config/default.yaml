@@ -4,20 +4,48 @@ agent:
 server:
   host: 127.0.0.1         # never change to 0.0.0.0
   port: 8765
-models:                   # role -> provider/model (placeholders; set in first-run wizard)
-  classifier: {provider: openai,    model: gpt-4o-mini}
-  planner:    {provider: anthropic, model: claude-sonnet-5-5}
-  worker:     {provider: anthropic, model: claude-sonnet-5-5, fallbacks: [{provider: openai, model: gpt-4o}]}
-  summarizer: {provider: openai,    model: gpt-4o-mini}
-  vision:     {provider: openai,    model: gpt-4o}
-  critic:     {provider: anthropic, model: claude-sonnet-5-5}
-budgets:
-  max_steps: 40
-  max_tool_calls: 80
-  max_seconds: 1800
-  max_tokens: 400000
-  max_cost_usd: 2.0
+# Cheap model (Haiku) for every auxiliary step; the strong model only where quality matters.
+#
+# Tried in order when the primary provider errors (e.g. Anthropic credit exhausted). Fallbacks whose
+# API key is missing are skipped. NOTE: as of 2026-10-31 the OpenAI and OpenRouter keys in use had no
+# credit, so Gemini is listed first; top those up or drop them. Google retires ids quickly
+# (gemini-2.5-flash was already gone) and returned 503 "high demand" on gemini-flash-latest: treat
+# this chain as best-effort, not a guarantee.
+x-fallbacks: &fb
+  - {provider: google, model: gemini-3.5-flash}
+  - {provider: openai, model: gpt-4o}
+models:
+  classifier: {provider: anthropic, model: claude-haiku-5-5,  max_tokens: 600,  fallbacks: *fb}
+  fast:       {provider: anthropic, model: claude-haiku-5-5,  max_tokens: 2000, fallbacks: *fb}
+  summarizer: {provider: anthropic, model: claude-haiku-5-5,  max_tokens: 1000, fallbacks: *fb}
+  planner:    {provider: anthropic, model: claude-sonnet-5-5, max_tokens: 2000, fallbacks: *fb}
+  critic:     {provider: anthropic, model: claude-sonnet-5-5, max_tokens: 1200, fallbacks: *fb}
+  worker:     {provider: anthropic, model: claude-sonnet-5-5, max_tokens: 4096, fallbacks: *fb}
+  vision:     {provider: anthropic, model: claude-sonnet-5-5, max_tokens: 2000, fallbacks: *fb}
+# USD per million tokens (https://platform.claude.com/docs/en/about-claude/pricing, 2026-10-31).
+# Models not listed use `default` (deliberately pessimistic) so unknown models never look free.
+pricing:
+  claude-haiku-5-5:  {input: 0.10, output: 0.50}   # prompts <= 100k tokens
+  claude-sonnet-5-5: {input: 2.00, output: 10.00}
+  claude-opus-5-5:   {input: 4.00, output: 20.00}
+  default:           {input: 5.00, output: 20.00}
+budgets:                  # per task
+  max_steps: 25           # worker LLM calls
+  max_tool_calls: 40
+  max_seconds: 600
+  max_tokens: 150000
+  max_cost_usd: 0.50
   max_consecutive_failures: 4
+  max_replans: 2
+  max_verifications: 4
+  daily_max_tokens: 1000000   # across ALL tasks, persisted; checked before every LLM call
+  daily_max_cost_usd: 2.00
+brain:
+  min_confidence: 0.55    # below this the agent asks one clarifying question
+context:
+  compact_tokens: 12000   # estimated tokens that trigger summarisation of old turns
+  keep_last: 6
+  offload_chars: 6000     # larger tool outputs are stored as artifacts, context keeps a digest
 observability:
   langfuse_enabled: false
 sandbox:

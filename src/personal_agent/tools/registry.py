@@ -30,7 +30,7 @@ def meta_for(name: str) -> ToolMeta | None:
 
 
 def load_tools() -> list[BaseTool]:
-    from personal_agent.tools import files, shell, web  # noqa: F401  (import registers tools)
+    from personal_agent.tools import artifacts, files, shell, web  # noqa: F401  (import registers tools)
 
     return [t for t, _ in _TOOLS.values()]
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
@@ -34,19 +35,41 @@ class ServerCfg(BaseModel):
 
 
 class Budgets(BaseModel):
-    max_steps: int = 40
-    max_tool_calls: int = 80
-    max_seconds: int = 1800
-    max_tokens: int = 400_000
-    max_cost_usd: float = 2.0
+    max_steps: int = 25
+    max_tool_calls: int = 40
+    max_seconds: int = 600
+    max_tokens: int = 150_000
+    max_cost_usd: float = 0.50
     max_consecutive_failures: int = 4
+    max_replans: int = 2
+    max_verifications: int = 4
+    daily_max_tokens: int = 1_000_000
+    daily_max_cost_usd: float = 2.0
+
+
+class Price(BaseModel):
+    input: float
+    output: float
+
+
+class BrainCfg(BaseModel):
+    min_confidence: float = 0.55
+
+
+class ContextCfg(BaseModel):
+    compact_tokens: int = 12_000
+    keep_last: int = 6
+    offload_chars: int = 6000
 
 
 class Settings(BaseModel):
     agent: AgentCfg = Field(default_factory=AgentCfg)
     server: ServerCfg = Field(default_factory=ServerCfg)
     models: dict[str, ModelSpec] = Field(default_factory=dict)
+    pricing: dict[str, Price] = Field(default_factory=dict)
     budgets: Budgets = Field(default_factory=Budgets)
+    brain: BrainCfg = Field(default_factory=BrainCfg)
+    context: ContextCfg = Field(default_factory=ContextCfg)
 
 
 def data_dir() -> Path:
@@ -80,3 +103,18 @@ def _yaml(p: Path) -> dict[str, Any]:
 def load_settings() -> Settings:
     raw = _merge(_yaml(config_dir() / "default.yaml"), _yaml(data_dir() / "config.yaml"))
     return Settings.model_validate(raw)
+
+
+# Names go into the system prompt, so keep them to a short, plain, single-line shape.
+_NAME_RE = re.compile(r"^\w[\w .'\-]{0,39}$")
+
+
+def set_agent_name(settings: Settings, name: str) -> None:
+    """Rename the agent: applies to the next turn (graph reads settings live) and persists."""
+    name = name.strip()
+    if not _NAME_RE.fullmatch(name):
+        raise ValueError("agent name must be 1-40 letters/digits/space/.-' characters")
+    path = data_dir() / "config.yaml"
+    path.write_text(yaml.safe_dump(_merge(_yaml(path), {"agent": {"name": name}}), allow_unicode=True),
+                    encoding="utf-8")
+    settings.agent.name = name
