@@ -1,0 +1,26 @@
+agent:
+  name: personal-agent
+  language: auto          # auto | vi | en
+server:
+  host: 127.0.0.1         # never change to 0.0.0.0
+  port: 8765
+models:                   # role -> provider/model (placeholders; set in first-run wizard)
+  classifier: {provider: openai,    model: gpt-4o-mini}
+  planner:    {provider: anthropic, model: claude-sonnet-5-5}
+  worker:     {provider: anthropic, model: claude-sonnet-5-5}
+  summarizer: {provider: openai,    model: gpt-4o-mini}
+  vision:     {provider: openai,    model: gpt-4o}
+  critic:     {provider: anthropic, model: claude-sonnet-5-5}
+fallback_chain: [anthropic, openai, google, openrouter]
+budgets:
+  max_steps: 40
+  max_tool_calls: 80
+  max_seconds: 1800
+  max_tokens: 400000
+  max_cost_usd: 2.0
+  max_consecutive_failures: 4
+observability:
+  langfuse_enabled: false
+sandbox:
+  idle_timeout_s: 300
+  network: false

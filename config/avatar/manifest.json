@@ -1,0 +1,10 @@
+{
+  "name": "default",
+  "version": 0,
+  "note": "Placeholder: sprites and real animations are delivered in Phase 7.",
+  "states": {
+    "idle": null, "listening": null, "thinking": null, "working": null, "speaking": null,
+    "awaiting_approval": null, "success": null, "error": null, "sleeping": null
+  },
+  "fallback": "idle"
+}
