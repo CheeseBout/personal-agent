@@ -13,10 +13,10 @@ python -m uv run mypy src
 ```
 
 ## Run (Phase 1)
-1. Store at least one provider key (Windows Credential Manager, service `personal-agent`), e.g.
-   `python -c "import keyring; keyring.set_password('personal-agent','ANTHROPIC_API_KEY','<key>')"`
-   (an env var such as `ANTHROPIC_API_KEY` also works as a dev fallback). Default models are in `config/default.yaml`;
-   override in `%APPDATA%\personal-agent\config.yaml`.
+1. Provide at least one provider key. Easiest: `copy .env.example .env` and fill in `ANTHROPIC_API_KEY=...`
+   (`.env` is git-ignored). Lookup order: real env vars > `.env` (`PERSONAL_AGENT_ENV_FILE`, `./.env`, then
+   `%APPDATA%\personal-agent\.env`) > Windows Credential Manager (service `personal-agent`). Default models are in
+   `config/default.yaml`; override in `%APPDATA%\personal-agent\config.yaml`.
 2. Create the workspace folder the agent may read: `%USERPROFILE%\Documents\agent-workspace` (see `config/policy.yaml`).
 3. Terminal 1: `python -m uv run agent-core` (daemon on 127.0.0.1:8765). Terminal 2: `python -m uv run agent-chat`.
 

@@ -22,6 +22,7 @@ def env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     monkeypatch.setenv("PERSONAL_AGENT_CONFIG_DIR", str(cfg))
     monkeypatch.setenv("PERSONAL_AGENT_HOME", str(tmp_path / "home"))
     monkeypatch.setenv("PERSONAL_AGENT_TOKEN", "test-token")
+    monkeypatch.setenv("PERSONAL_AGENT_ENV_FILE", str(tmp_path / "no.env"))  # never read a real .env
     load_settings.cache_clear()
     policy.cache_clear()
     return ws
