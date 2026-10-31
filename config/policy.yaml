@@ -9,7 +9,11 @@ paths:
   allow: ['%USERPROFILE%\Documents\agent-workspace']
   deny: ['C:\Windows', 'C:\Program Files', '%APPDATA%\personal-agent\secrets']
 commands:
-  deny_patterns: ['format\s', 'reg\s+(add|delete)', 'Remove-Item\s+.*-Recurse.*[A-Z]:\$']
+  # Phase 1 has no HITL yet. The command string must FULL-MATCH one pattern and is run as argv
+  # (no shell, so no aliases/expansion). Anything else is refused until approvals exist (Phase 3).
+  allow_patterns: ['hostname', 'whoami', 'python --version', 'where [A-Za-z0-9_.\-]+']
+  timeout_s: 30
+  deny_patterns: ['--output','format\s', 'reg\s+(add|delete)', 'Remove-Item\s+.*-Recurse.*[A-Z]:\$']
 network:
   domain_allowlist: []
 rate_limits:

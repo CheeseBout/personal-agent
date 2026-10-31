@@ -19,6 +19,7 @@ dependencies = [
   "keyring==25.7.0",
   "httpx==0.28.1",
   "structlog==26.1.0",
+  "ddgs==9.16.1",
 ]
 
 [project.optional-dependencies]
@@ -34,11 +35,11 @@ voice = ["edge-tts==7.3.1", "faster-whisper==1.2.1"]
 ui = ["PySide6==6.12.0"]
 
 [dependency-groups]
-dev = ["ruff==0.17.3", "mypy==2.4.1", "pytest==9.2.0", "pytest-asyncio==1.4.1"]
+dev = ["ruff==0.17.3", "mypy==2.4.1", "pytest==9.2.0", "pytest-asyncio==1.4.1", "types-PyYAML==6.0.12.20261030"]
 
 [project.scripts]
 agent-core = "personal_agent.core.main:main"
-agent-ui = "personal_agent.ui.main:main"
+agent-chat = "personal_agent.cli:main"
 
 [build-system]
 requires = ["hatchling"]
@@ -59,3 +60,4 @@ python_version = "3.12"
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 testpaths = ["tests"]
+pythonpath = ["tests"]

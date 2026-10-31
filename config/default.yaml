@@ -7,11 +7,10 @@ server:
 models:                   # role -> provider/model (placeholders; set in first-run wizard)
   classifier: {provider: openai,    model: gpt-4o-mini}
   planner:    {provider: anthropic, model: claude-sonnet-5-5}
-  worker:     {provider: anthropic, model: claude-sonnet-5-5}
+  worker:     {provider: anthropic, model: claude-sonnet-5-5, fallbacks: [{provider: openai, model: gpt-4o}]}
   summarizer: {provider: openai,    model: gpt-4o-mini}
   vision:     {provider: openai,    model: gpt-4o}
   critic:     {provider: anthropic, model: claude-sonnet-5-5}
-fallback_chain: [anthropic, openai, google, openrouter]
 budgets:
   max_steps: 40
   max_tool_calls: 80
