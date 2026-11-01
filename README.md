@@ -48,7 +48,7 @@ Real-container tests (need Docker running): `python -m uv run pytest -m docker`.
 ## Phase 2: budgets and quota protection
 Per-task and **daily** caps live in `config/default.yaml` (`budgets:`; defaults: 1M tokens / $2 per day). Override in
 `%APPDATA%\personal-agent\config.yaml`. In `agent-chat`: `/usage` shows today's totals, `/name <name>` renames the agent.
-Cheap Haiku handles chat and bookkeeping; Sonnet is used for planning, tool work on planned tasks and verification.
+Defaults (no Sonnet): local `gemma4:e4b` classifies intent, Haiku plans and verifies, `gemini-3.5-flash-lite` does chat, summaries and tool work, local `bge-m3` embeds documents (needs Ollama running; `ollama pull gemma4:e4b bge-m3`).
 No software can guarantee an API key never runs out - also set a spend limit in the Anthropic Console. Details: `docs/phase2.md`.
 Real-provider checks (cost a few cents): `python -m uv run pytest -m live -s`.
 

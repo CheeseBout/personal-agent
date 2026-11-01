@@ -14,9 +14,9 @@ server:
 x-fallbacks: &fb          # Google-primary roles: Haiku first, then OpenAI
   - {provider: anthropic, model: claude-haiku-5-5}
   - {provider: openai, model: gpt-4o}
-x-fb-haiku: &fbh          # Haiku-primary planner/critic: escalate to Sonnet, then Google
-  - {provider: anthropic, model: claude-sonnet-5-5}
+x-fb-haiku: &fbh          # Haiku-primary planner/critic: Google, then OpenAI (no Sonnet by design)
   - {provider: google, model: gemini-3.5-flash-lite}
+  - {provider: openai, model: gpt-4o}
 x-fb-local: &fbl          # local Ollama classifier: daemon down or unusable output -> Haiku
   - {provider: anthropic, model: claude-haiku-5-5}
 models:
@@ -26,12 +26,11 @@ models:
   planner:    {provider: anthropic, model: claude-haiku-5-5,      max_tokens: 2000, fallbacks: *fbh}
   critic:     {provider: anthropic, model: claude-haiku-5-5,      max_tokens: 1200, fallbacks: *fbh}
   worker:     {provider: google,    model: gemini-3.5-flash-lite, max_tokens: 4096, fallbacks: *fb}
-  vision:     {provider: anthropic, model: claude-sonnet-5-5,     max_tokens: 2000, fallbacks: *fb}
+  vision:     {provider: anthropic, model: claude-haiku-5-5,      max_tokens: 2000, fallbacks: *fbh}
 # USD per million tokens (https://platform.claude.com/docs/en/about-claude/pricing, 2026-10-31).
 # Models not listed use `default` (deliberately pessimistic) so unknown models never look free.
 pricing:
   claude-haiku-5-5:  {input: 0.10, output: 0.50}   # prompts <= 100k tokens
-  claude-sonnet-5-5: {input: 2.00, output: 10.00}
   claude-opus-5-5:   {input: 4.00, output: 20.00}
   gemini-3.5-flash-lite: {input: 0.10, output: 0.40}   # ESTIMATE - verify against Google pricing
   "gemma4:e4b":      {input: 0.00, output: 0.00}   # local (Ollama)
