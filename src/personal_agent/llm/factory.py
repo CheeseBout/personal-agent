@@ -22,6 +22,7 @@ KEY_NAMES = {
     "openrouter": "OPENROUTER_API_KEY",
 }
 OPENROUTER_URL = "https://openrouter.ai/api/v1"
+OLLAMA_URL = "http://localhost:11434"  # override with OLLAMA_HOST; local, so no API key
 
 
 class MissingSecretError(RuntimeError):
@@ -29,9 +30,9 @@ class MissingSecretError(RuntimeError):
 
 
 def build_chat_model(ref: ModelRef, spec: ModelSpec | None = None, retries: int = 3) -> BaseChatModel:
-    if ref.provider not in KEY_NAMES:
-        raise ValueError(f"unknown provider '{ref.provider}' (expected one of {sorted(KEY_NAMES)})")
-    key = get_secret(KEY_NAMES[ref.provider])
+    if ref.provider != "ollama" and ref.provider not in KEY_NAMES:
+        raise ValueError(f"unknown provider '{ref.provider}' (expected one of {sorted([*KEY_NAMES, 'ollama'])})")
+    key = "ollama" if ref.provider == "ollama" else get_secret(KEY_NAMES[ref.provider])
     if not key:
         raise MissingSecretError(
             f"No API key for provider '{ref.provider}'. Store {KEY_NAMES[ref.provider]} in Windows "
@@ -44,11 +45,14 @@ def build_chat_model(ref: ModelRef, spec: ModelSpec | None = None, retries: int 
             kw["temperature"] = spec.temperature
         if spec.max_tokens is not None:
             kw["max_tokens"] = spec.max_tokens
-    if ref.provider in ("openai", "openrouter"):
+    if ref.provider in ("openai", "openrouter", "ollama"):
         from langchain_openai import ChatOpenAI
 
         if ref.provider == "openrouter":
             kw["base_url"] = OPENROUTER_URL
+        elif ref.provider == "ollama":  # Ollama's OpenAI-compatible endpoint; no new dependency
+            kw["base_url"] = (get_secret("OLLAMA_HOST") or OLLAMA_URL).rstrip("/") + "/v1"
+            kw["max_retries"] = 0  # fail fast to the fallback if the daemon is down
         return ChatOpenAI(**kw)
     if ref.provider == "anthropic":
         from langchain_anthropic import ChatAnthropic

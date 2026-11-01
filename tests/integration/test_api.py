@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 from typing import Any
 
@@ -109,6 +110,11 @@ def test_usage_and_rename_commands(tmp_path: Path) -> None:
 
 def test_missing_api_key_is_reported_not_crashed(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("personal_agent.llm.factory.get_secret", lambda name: None)
+    # the default classifier is local Ollama (keyless); pin it to a keyed provider so this test never hits a real daemon
+    home = Path(os.environ["PERSONAL_AGENT_HOME"])
+    home.mkdir(parents=True, exist_ok=True)
+    (home / "config.yaml").write_text(
+        "models:\n  classifier: {provider: anthropic, model: claude-haiku-5-5, fallbacks: []}\n", encoding="utf-8")
     app = create_app(db_path=tmp_path / "c.db", token="test-token")  # real LiveBrain
     with TestClient(app) as c, c.websocket_connect("/ws", headers=AUTH) as ws:
         hello(ws)

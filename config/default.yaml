@@ -11,23 +11,30 @@ server:
 # credit, so Gemini is listed first; top those up or drop them. Google retires ids quickly
 # (gemini-2.5-flash was already gone) and returned 503 "high demand" on gemini-flash-latest: treat
 # this chain as best-effort, not a guarantee.
-x-fallbacks: &fb
-  - {provider: google, model: gemini-3.5-flash}
+x-fallbacks: &fb          # Google-primary roles: Haiku first, then OpenAI
+  - {provider: anthropic, model: claude-haiku-5-5}
   - {provider: openai, model: gpt-4o}
+x-fb-haiku: &fbh          # Haiku-primary planner/critic: escalate to Sonnet, then Google
+  - {provider: anthropic, model: claude-sonnet-5-5}
+  - {provider: google, model: gemini-3.5-flash-lite}
+x-fb-local: &fbl          # local Ollama classifier: daemon down or unusable output -> Haiku
+  - {provider: anthropic, model: claude-haiku-5-5}
 models:
-  classifier: {provider: anthropic, model: claude-haiku-5-5,  max_tokens: 600,  fallbacks: *fb}
-  fast:       {provider: anthropic, model: claude-haiku-5-5,  max_tokens: 2000, fallbacks: *fb}
-  summarizer: {provider: anthropic, model: claude-haiku-5-5,  max_tokens: 1000, fallbacks: *fb}
-  planner:    {provider: anthropic, model: claude-sonnet-5-5, max_tokens: 2000, fallbacks: *fb}
-  critic:     {provider: anthropic, model: claude-sonnet-5-5, max_tokens: 1200, fallbacks: *fb}
-  worker:     {provider: anthropic, model: claude-sonnet-5-5, max_tokens: 4096, fallbacks: *fb}
-  vision:     {provider: anthropic, model: claude-sonnet-5-5, max_tokens: 2000, fallbacks: *fb}
+  classifier: {provider: ollama,    model: "gemma4:e4b",          max_tokens: 600,  timeout_s: 30, fallbacks: *fbl}
+  fast:       {provider: google,    model: gemini-3.5-flash-lite, max_tokens: 2000, fallbacks: *fb}
+  summarizer: {provider: google,    model: gemini-3.5-flash-lite, max_tokens: 1000, fallbacks: *fb}
+  planner:    {provider: anthropic, model: claude-haiku-5-5,      max_tokens: 2000, fallbacks: *fbh}
+  critic:     {provider: anthropic, model: claude-haiku-5-5,      max_tokens: 1200, fallbacks: *fbh}
+  worker:     {provider: google,    model: gemini-3.5-flash-lite, max_tokens: 4096, fallbacks: *fb}
+  vision:     {provider: anthropic, model: claude-sonnet-5-5,     max_tokens: 2000, fallbacks: *fb}
 # USD per million tokens (https://platform.claude.com/docs/en/about-claude/pricing, 2026-10-31).
 # Models not listed use `default` (deliberately pessimistic) so unknown models never look free.
 pricing:
   claude-haiku-5-5:  {input: 0.10, output: 0.50}   # prompts <= 100k tokens
   claude-sonnet-5-5: {input: 2.00, output: 10.00}
   claude-opus-5-5:   {input: 4.00, output: 20.00}
+  gemini-3.5-flash-lite: {input: 0.10, output: 0.40}   # ESTIMATE - verify against Google pricing
+  "gemma4:e4b":      {input: 0.00, output: 0.00}   # local (Ollama)
   default:           {input: 5.00, output: 20.00}
 budgets:                  # per task
   max_steps: 25           # worker LLM calls
@@ -58,7 +65,7 @@ workers:
     comms:    {model_role: fast,   tools: [email_search, email_read, calendar_list, artifact_read]}
     coder:    {model_role: worker, private_context: false, tools: [sandbox_stage, run_python, sandbox_run, sandbox_changes, artifact_read]}
 rag:
-  embedding: {provider: google, model: gemini-embedding-001, dim: 768}   # OpenAI key had no credit; see docs/phase4.md
+  embedding: {provider: ollama, model: bge-m3, dim: 1024}   # local: `ollama pull bge-m3`; changing model/dim means re-indexing (docs/phase4.md)
   chunk_chars: 900
   overlap_chars: 120
   top_k: 5

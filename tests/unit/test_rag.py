@@ -193,7 +193,7 @@ def test_real_embedder_obeys_the_daily_cap_before_any_paid_call() -> None:
     emb._call = lambda b, q: paid.__setitem__("n", paid["n"] + 1) or [[1.0]]  # type: ignore[method-assign]
     with pytest.raises(EmbeddingUnavailable, match="daily"):
         emb.embed(["x"])
-    assert paid["n"] == 0 and s.rag.embedding.provider == "google"
+    assert paid["n"] == 0 and s.rag.embedding.provider == "ollama"
 
 
 def test_embedding_usage_is_metered() -> None:

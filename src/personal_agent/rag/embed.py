@@ -103,6 +103,24 @@ class OpenAIEmbedder(_Metered):
         return [d.embedding for d in r.data]
 
 
+class OllamaEmbedder(_Metered):
+    """Local Ollama (e.g. bge-m3, dim 1024). Free: no usage recorded. Needs the Ollama daemon running."""
+
+    def _call(self, batch: list[str], query: bool) -> list[list[float]]:
+        import httpx
+
+        host = (get_secret("OLLAMA_HOST") or "http://localhost:11434").rstrip("/")
+        r = httpx.post(f"{host}/api/embed", json={"model": self.cfg.model, "input": batch}, timeout=120)
+        r.raise_for_status()
+        vecs: list[list[float]] = r.json()["embeddings"]
+        if vecs and len(vecs[0]) != self.dim:
+            raise EmbeddingUnavailable(f"{self.cfg.model} returned dim {len(vecs[0])}, config says {self.dim}")
+        return vecs
+
+    def _account(self, texts: list[str]) -> None:
+        return  # local: free
+
+
 class LocalEmbedder(_Metered):
     """fastembed (ONNX) - optional extra `local-embeddings`; the model is downloaded on first use."""
 
@@ -123,7 +141,7 @@ class LocalEmbedder(_Metered):
 
 def build_embedder(cfg: EmbeddingCfg, guard: Callable[[], None] | None = None,
                    on_usage: Callable[[str, int], None] | None = None) -> Embedder:
-    kinds = {"google": GoogleEmbedder, "openai": OpenAIEmbedder, "local": LocalEmbedder}
+    kinds = {"google": GoogleEmbedder, "openai": OpenAIEmbedder, "ollama": OllamaEmbedder, "local": LocalEmbedder}
     if cfg.provider not in kinds:
         raise ValueError(f"unknown embedding provider '{cfg.provider}'")
     return kinds[cfg.provider](cfg, guard, on_usage)

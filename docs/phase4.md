@@ -19,7 +19,7 @@
 ## RAG
 Structure-aware chunking (never crosses a heading or page), incremental ingestion by SHA-256, one writer lock, embed-before-write so a
 failed embedding leaves the old version searchable. Retrieval = **0.7 x cosine + 0.3 x coverage^2** (sqlite-vec + FTS5 with Vietnamese
-diacritic folding). Embeddings: `gemini-embedding-001` @ 768 dims (config `rag.embedding`); every call is guarded by the daily cap and metered.
+diacritic folding). Embeddings: `bge-m3` via local Ollama @ 1024 dims (config `rag.embedding`; `ollama pull bge-m3`; the previous default was `gemini-embedding-001` @ 768, and changing model or dim requires re-indexing); every call is guarded by the daily cap and metered.
 Folder watcher (watchdog OS events, debounced, below-normal thread priority, pausable) for folders listed in `rag.watch` that sit inside `paths.allow`.
 
 ## Memory
