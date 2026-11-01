@@ -1,6 +1,6 @@
 """Sub-agent ("worker") runner: one ReAct loop per delegated step, with its own context and a restricted toolset.
 
-Safety model (see docs/phase5.md): a worker never pauses for approval. Every tool call goes through the same
+Safety model (see docs/architecture.md, Sub-agents): a worker never pauses for approval. Every tool call goes through the same
 PolicyEngine as the main loop; if a call would need a human, the worker STOPS and reports it, and the supervisor
 handles it in its own gated loop. Workers share the daily caps through Meter reservations.
 """

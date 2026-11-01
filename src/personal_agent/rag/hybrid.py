@@ -1,6 +1,6 @@
 """SQLite helpers shared by RAG and memory: sqlite-vec (dense), FTS5 (BM25) and score fusion.
 
-sqlite-vec is pre-1.0 (ADR-0002): everything vector-specific is confined to this file.
+sqlite-vec is pre-1.0 (docs/decisions.md): everything vector-specific is confined to this file.
 
 Fusion: score = 0.7 * cosine + 0.3 * coverage^2 (coverage = share of the query's content words found in the passage).
 Plain reciprocal-rank fusion was tried first and, measured with real Gemini embeddings, let ONE accidental shared word

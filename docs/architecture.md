@@ -1,86 +1,115 @@
 # Architecture
 
-Two processes plus an optional container. The UI is a pure client: closing it never stops a running task.
+A single-user, Windows-first agent: a local **daemon** runs the agent, a separate **UI** process is a pure client. Cloud LLMs by default; everything else is local.
 
 ```mermaid
 flowchart LR
-  subgraph UI["agent-ui (PySide6, per user session)"]
-    tray[Tray + hotkeys]
-    chat[Chat + plan panel]
-    appr[Approval center]
-    mgr[Manager + Settings + wizard]
-    av[Avatar + skins + overlays]
-    voice[Mic + TTS]
-    cap[Capture / region]
+  subgraph UI["agent-ui (PySide6)"]
+    tray[Tray, hotkeys]
+    chat[Chat, plan panel, approvals]
+    mgr[Manager, settings, wizard]
+    av[Avatar, overlays, voice, capture]
   end
   subgraph CORE["agent-core (FastAPI, 127.0.0.1 + token)"]
     ws[WebSocket API]
     subgraph G["LangGraph agent"]
       ingest --> classify
       classify -->|chat| fast
-      classify -->|task| plan --> work
-      work --> gate{{policy gate}} --> tools
-      tools --> work
-      work -->|workers| workers[parallel sub-agents]
-      work --> verify --> respond
+      classify -->|task| plan --> sup[supervisor]
+      sup -->|parallel| workers
+      sup --> loop[agent / gate / tools] --> verify --> respond
     end
-    pol[Policy engine + approvals + kill switch]
+    pol[Policy, approvals, kill switch]
     sched[Scheduler]
-    obs[Metrics / Langfuse / audit log]
+    obs[Metrics, Langfuse, audit]
     watch[Screen watcher]
   end
-  subgraph STORES["%APPDATA%\\personal-agent (SQLite + yaml)"]
-    ckpt[(checkpoints)]
-    mem[(memory + RAG)]
-    use[(usage + events)]
-    aud[(audit + approvals)]
-    cfgf[config.yaml, policy.yaml, mcp.yaml]
+  subgraph STORE["%APPDATA%\personal-agent"]
+    db[(SQLite: checkpoints, memory, RAG, usage, audit, approvals, schedules)]
+    cfg[config.yaml, policy.yaml, mcp.yaml, skins, logs]
   end
   subgraph WORLD["Outside"]
-    llm["LLMs: Anthropic, Google, OpenAI, OpenRouter, Ollama"]
-    web[Web / email / calendar / MCP servers]
-    docker[Docker sandbox, no network]
-    win["Windows: UI Automation, SendInput, OCR, mss"]
+    llm[Anthropic, Google, OpenAI, OpenRouter, Ollama]
+    web[Web, email, calendar, MCP servers]
+    dock[Docker sandbox, no network]
+    win[Windows: UI Automation, SendInput, OCR, screen capture]
   end
-  UI <-- "ws://127.0.0.1" --> ws
+  UI <-- ws --> ws
   ws --> G
   G --- pol
-  pol --- STORES
   G --> llm
-  tools --> web
-  tools --> docker
-  tools --> win
+  G --> web
+  G --> dock
+  G --> win
   sched --> G
-  obs --- use
-  watch --> win
+  CORE --- STORE
 ```
 
+## Processes
+- **`agent-core`** hosts the graph, tools, memory, RAG, policy, scheduler, screen watcher and observability. It binds to `127.0.0.1` only and refuses anything else.
+  Every WebSocket / `POST /kill` request needs the per-install token; foreign `Origin` headers are rejected; `GET /health` returns only `{"status":"ok"}`.
+- **`agent-ui`** talks to the daemon only through the WebSocket (QtWebSockets, auto-reconnect). Closing or crashing it never stops a task; on reconnect the daemon re-sends pending approvals.
+  The UI holds no agent state (`ui/model.py` is a view of the event stream).
+- **Docker sandbox** (optional, lazy): see below. **`agent-chat`** is a terminal client with the same protocol.
+
 ## One turn
-1. `ingest` detects Vietnamese/English, builds the message (text + images + extracted documents + transcribed audio).
-2. `classify` (cheap model) decides chat / question / task and risk; a low-confidence answer asks one clarifying question.
-3. Simple questions go straight to `fast`; tasks go to `plan` (goal, success criteria, steps, optional parallel sub-agents) and a worker loop.
-4. **Every tool call passes the gate** before it runs: policy tier (T0 auto, T1 auto unless the task has seen untrusted content, T2 human approval, T3 denied),
-   path/command/domain rules, rate limits, kill switch. Approvals are stored on disk, survive restarts and are answered from the UI.
-5. `verify` checks the success criteria (bounded replans), `respond` answers. Token/cost budgets, step limits and no-progress detection are enforced in code.
+1. `ingest` detects Vietnamese/English and builds the message: text, images, extracted documents (md/txt/csv/docx/pdf), transcribed audio. Anything attached marks the task *tainted*.
+2. `classify` (cheap model, structured `Intent`). Low confidence with a clarifying question → ask one question and stop.
+3. Chat / simple question → **fast path** (one worker call, no planner, no verifier). Otherwise `plan` produces a `Goal` with checkable success criteria and steps, each with a `role` and `depends_on`.
+4. **Sub-agents.** The supervisor delegates only *independent information-gathering* steps (≥ `min_delegable`) to parallel workers in waves of `max_parallel`; writes, sending and composing the answer stay in the supervisor.
+   Workers have their own small context, only the tools of their role, a slice of the remaining budget, and **never ask for approval**: if the policy says "approve" they stop and report it, and the supervisor asks.
+5. Worker loop `compact → agent → gate → tools → account`. **Every tool call passes the `gate` first** (policy tier, path/command/domain rules, rate limit, kill switch, taint); calls needing a human go into one `interrupt()`.
+   The gate is idempotent, so resuming after an approval never re-runs a tool.
+6. `verify` (critic, structured `Verdict`) must mark *every* criterion met for a planned task to end `done`; otherwise bounded replans. `respond` answers.
 
-## Where things live
-| Piece | Code |
-|---|---|
-| Daemon, API, lifecycle | `core/` (`app.py`, `admin.py`, `attachments.py`, `main.py`) |
-| Graph, budgets, sub-agents | `graph/` |
-| Providers and routing | `llm/factory.py`, `config/default.yaml` (`models:`) |
-| Policy, approvals, kill switch | `policy/`, `config/policy.yaml` |
-| Tools (one module per group) | `tools/` registered in `tools/registry.py` |
-| Docker sandbox, staging/diff/apply/undo | `sandbox/` |
-| Screen perception and control | `perception/`, `tools/screen_tools.py` |
-| Memory, RAG | `memory/`, `rag/` |
-| Metrics, tracing, audit, logs | `observability/` |
-| UI | `ui/` |
-| Damaged-file handling | `storage.py` |
-| Settings, secrets | `settings/` |
+Limits are enforced in code, not by the model: per-task steps / tool calls / seconds / tokens / USD / consecutive failures / replans / verifications, no-progress detection (same call 3× in 6), and a **daily** token + USD cap persisted in SQLite and checked before every model call
+(parallel workers *reserve* their worst case first, so branches cannot overshoot together). Big tool outputs are stored as artifacts and old turns summarised (`compact_tokens`).
 
-## Trust boundaries
-- The local API only listens on loopback, needs the per-install token and rejects foreign `Origin` headers.
-- Tool outputs, web pages, emails, clipboard text, documents and **everything read from the screen** are untrusted data: they taint the task, and side effects that follow need approval.
-- The agent cannot edit its own policy, config, MCP list, database files or audit log (they live in a denied path; policy/settings are changed only through the authenticated UI/API).
-- Secrets live in Windows Credential Manager (or a git-ignored `.env`), are redacted from logs, traces, audit entries, tool output and WebSocket events, and are write-only in the UI.
+## Models and routing (`config/default.yaml`, editable in Settings)
+| Role | Default | Notes |
+|---|---|---|
+| classifier, planner, critic, vision | Claude Haiku 5.5 | structured output; fallbacks Gemini flash-lite → gpt-4o |
+| fast, summarizer, worker | Gemini 3.5 flash-lite | fallbacks Haiku → gpt-4o |
+| embeddings | Ollama `bge-m3`, 1024 dims | local, multilingual; changing model/dimension re-indexes automatically |
+| speech-to-text / text-to-speech | Gemini audio / edge-tts | STT is a metered daemon call; TTS runs in the UI |
+
+Fallback models are built only when the primary fails (a provider SDK costs 40-90 MB). Unknown models are priced pessimistically so nothing looks free. A local classifier (`gemma4:e4b`) was tried and rejected: 13-65 s per call and invalid JSON.
+
+## Tools
+All registered in `tools/registry.py` with policy metadata (tier, side effects, untrusted output, risk, preview, "remember" scope, attended-only).
+| Group | Tools | Tier |
+|---|---|---|
+| Files | `file_read/list/search` · `file_write/edit/move/delete`, `undo_change` | T0 · T2 (backed up, undoable) |
+| Shell, code | `shell` (read-only allow-list runs unattended, else T2) · `run_python`, `sandbox_*` (Docker) | T1-T2 |
+| Web | `web_search` (DuckDuckGo, pluggable), `web_fetch`, `browser_read` (Playwright), `http_request` (named secrets, listed hosts only) | T0-T1, SSRF-safe |
+| Mail, calendar, clipboard | `email_search/read` (T0), `email_send` (T2) · `calendar_list` (T0), `calendar_add` (T2; local `.ics`) · `clipboard_read` (T0), `clipboard_write` (T2) | |
+| Knowledge | `rag_*`, `remember`, `recall`, `forget` | T0-T1 (sensitive memory T2) |
+| Scheduling | `schedule_task` (T2, attended only), `schedule_list/cancel` | |
+| MCP | any server in `mcp.yaml`, namespaced `<server>_<tool>` | T2 unless you classify it |
+| Screen | `screen_windows`, `screen_describe`, `screen_ocr`, `ui_tree` (T0, untrusted) · `ui_act` (T2, attended only, never remembered) | |
+
+## Knowledge
+- **RAG:** structure-aware chunks (never across a heading/page), incremental by SHA-256, embed-before-write; sqlite-vec + FTS5 with Vietnamese diacritic folding; score = 0.7 × cosine + 0.3 × coverage²; answers cite file / heading / page.
+  A folder watcher (`rag.watch`, inside the allowed paths) keeps folders indexed.
+- **Memory:** semantic / episodic / procedural. At task start the top memories (BM25, no API call) are injected as information, not instructions. After planned tasks the cheap model *proposes* memories; they become active only if confident, non-sensitive and
+  from a task that read no untrusted content, otherwise they wait for your approval. 90-day half-life; list/edit/approve/delete everything.
+
+## Sandbox and staging
+Started lazily, auto-stopped when idle (300 s): `--network none`, all capabilities dropped, no-new-privileges, read-only root, non-root, 1 CPU / 512 MB / 128 pids, **one** bind mount (the staging folder).
+Files are copied in, the agent works on copies, the diff against the originals (added / modified / deleted / conflict) is shown on an approval card, you approve per file, and only then it is applied with a backup and `undo_change`. No Docker → `sandbox_*` report it and host tools stay T2.
+
+## Screen perception and control
+Structured first: UI Automation (names, roles, rectangles, Invoke pattern) → Windows OCR (local) → vision model on request. Input is `SendInput`. Continuous watching (`ScreenWatcher`) is low-FPS with perceptual-hash change detection, in memory only, opt-in, auto-off.
+Privacy blocklist and control restrictions are in [security.md](security.md).
+
+## Observability
+Local SQLite metrics (latency, errors, tool success per day; "Usage" page and `/usage`) are always on; optional Langfuse traces (payloads redacted before export); structured JSON logs with rotation and redaction under `%APPDATA%\personal-agent\logs`;
+append-only audit log of every tool call. Eval harness: `agent-eval` ([development.md](development.md)).
+
+## Storage and resilience
+One SQLite file per store plus yaml. A damaged config or database is renamed `*.corrupt-<time>` / `*.invalid-<time>` and recreated (never deleted); a broken `policy.yaml` edit keeps the last good rules. `policy.yaml` edited in the UI is saved to `%APPDATA%\personal-agent\policy.yaml`
+(the shipped copy may be read-only). Messages are capped (32 MB frame, 4 attachments, 15 MB) and turns are queued (≤ 8).
+
+## Footprint (measured, idle, Windows 11)
+Daemon ~106 MB, ~183 MB after the first chat (provider SDKs load on demand), start-up ~4 s; UI ~100 MB offscreen / ~170 MB on a real desktop; CPU ~0 % with no polling (the scheduler sleeps to the next job, the screen watcher exists only while on).
+The original targets (daemon ≤ 100, UI ≤ 60, combined < 150 MB, start ≤ 3 s) were not reachable with PySide6 + LangGraph; see [decisions.md](decisions.md). Measure with `scripts/profile_resources.py`.

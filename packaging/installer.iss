@@ -1,6 +1,6 @@
 ; Inno Setup script (https://jrsoftware.org/isinfo.php): wraps dist\personal-agent into PersonalAgentSetup.exe.
 ; Compile with:  iscc packaging\installer.iss        (after scripts\build.ps1)
-; NOT compiled or tested in this repository's CI: treat it as a starting point and see docs/packaging.md.
+; NOT compiled or tested in this repository's CI: treat it as a starting point and see docs/development.md (Packaging).
 #define AppName "personal-agent"
 #define AppVersion "0.1.0"
 

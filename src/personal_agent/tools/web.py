@@ -19,7 +19,7 @@ def _ddg(query: str, n: int) -> list[dict[str, Any]]:
     return list(DDGS().text(query, max_results=n))
 
 
-PROVIDER: Provider = _ddg  # swap for Tavily/Brave/SearXNG later (ADR-0004)
+PROVIDER: Provider = _ddg  # swap for Tavily/Brave/SearXNG later (docs/decisions.md)
 
 
 @tool

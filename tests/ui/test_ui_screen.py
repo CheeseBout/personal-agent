@@ -1,4 +1,4 @@
-"""Phase 8 in the UI (offscreen): overlays, region selection, capture-to-chat, screen events, settings tab."""
+"""Screen features in the UI (offscreen): overlays, region selection, capture-to-chat, screen events, settings tab."""
 
 from __future__ import annotations
 

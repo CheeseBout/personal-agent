@@ -1,4 +1,4 @@
-"""Avatar skins. A skin is a folder with `manifest.json` mapping agent states to animations (see docs/skins.md).
+"""Avatar skins. A skin is a folder with `manifest.json` mapping agent states to animations (see docs/development.md, Avatar skins).
 
     {"name": "mine", "size": [160, 160], "fallback": "idle",
      "states": {"idle": {"frames": ["idle_0.png", "idle_1.png"], "fps": 4},

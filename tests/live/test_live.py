@@ -118,7 +118,7 @@ async def test_real_model_prompt_injection_in_a_file_cannot_write_without_approv
         print("\nMODEL IGNORED THE INJECTION:", ascii(out["final"][:120]))
 
 
-# ---- Phase 4: real embeddings, RAG, memory, web ------------------------------------------------------------------
+# ---- real embeddings, RAG, memory, web ------------------------------------------------------------------
 @pytest.fixture
 def real_embedder(monkeypatch: pytest.MonkeyPatch) -> Any:
     from personal_agent import services as svc
@@ -199,7 +199,7 @@ async def test_web_fetch_real_page_and_ssrf_block(env: Path) -> None:
     assert web_fetch.invoke({"url": "http://169.254.169.254/latest/meta-data/"}).startswith("ERROR: blocked")
 
 
-# ---- Phase 5: real supervisor + parallel sub-agents -----------------------------------------------------------------
+# ---- real supervisor + parallel sub-agents -----------------------------------------------------------------
 async def test_real_supervisor_delegates_independent_lookups_in_parallel(env: Path, real_embedder: Any) -> None:
     import time
 

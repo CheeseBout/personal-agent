@@ -1,4 +1,4 @@
-"""Phase 6: local metrics callback, usage report, and Langfuse gating (no network)."""
+"""Local metrics callback, usage report, and Langfuse gating (no network)."""
 
 from __future__ import annotations
 

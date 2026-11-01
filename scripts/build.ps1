@@ -1,7 +1,7 @@
 # Builds the Windows bundle: dist\personal-agent\{agent-core.exe, agent-ui.exe, agent-chat.exe} (PyInstaller, one folder).
 #   .\scripts\build.ps1                 build
 #   .\scripts\build.ps1 -Smoke          build, then start the packaged daemon on a spare port and check /health
-# Optional installer: see docs/packaging.md (Inno Setup script in packaging\installer.iss).
+# Optional installer: see docs/development.md (Packaging; Inno Setup script in packaging\installer.iss).
 param([switch]$Smoke)
 $ErrorActionPreference = "Stop"
 Set-Location (Split-Path $PSScriptRoot -Parent)

@@ -251,7 +251,7 @@ def create_app(brain: Brain | None = None, db_path: Path | None = None, token: s
               "mcp_list", "mcp_set", "mcp_reload", "schedules", "schedule_cancel"}
 
     async def manage(kind: str, msg: dict[str, Any]) -> dict[str, Any]:
-        """Management calls behind the Memory / RAG / MCP / Schedule pages (the UI arrives in Phase 7)."""
+        """Management calls behind the Memory / RAG / MCP / Schedule pages (shown in the UI Manager window)."""
         s = app.state
         mem, rag = services.memory(), services.rag()
         if kind == "memory_list":

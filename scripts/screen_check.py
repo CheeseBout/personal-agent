@@ -1,4 +1,4 @@
-"""Phase 8 on your REAL desktop: capture, privacy masking, OCR, UI Automation, vision, and mouse/keyboard control.
+"""Screen perception and control on your REAL desktop: capture, privacy masking, OCR, UI Automation, vision, and mouse/keyboard control.
 
 Run from the repo root:  python -m uv run python scripts/screen_check.py
 It opens two small test windows ("PA Screen Test" and a "KeePass test window" that the privacy blocklist must hide), then uses the

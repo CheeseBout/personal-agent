@@ -1,4 +1,4 @@
-"""Regression tests for the issues found in the Phase 4 security review."""
+"""Regression tests for issues found in the tools / knowledge review."""
 
 import base64
 import threading

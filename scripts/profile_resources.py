@@ -2,7 +2,7 @@
 
 Run from the repo root:  python -m uv run python scripts/profile_resources.py [--no-ui]
 Uses a throw-away data dir and an unused port; nothing of yours is touched. The UI is measured offscreen (no real window).
-Targets (docs/phase0.md): idle daemon <= 100 MB, idle UI <= 60 MB (combined < 150 MB), idle CPU ~0%, daemon cold start <= 3 s.
+Targets (docs/decisions.md): daemon idle <= 110 MB (<= 200 MB after the first chat), UI <= 110 MB offscreen, idle CPU ~0%, daemon start <= 5 s.
 """
 
 import argparse

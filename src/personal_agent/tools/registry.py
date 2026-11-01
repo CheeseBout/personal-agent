@@ -51,7 +51,7 @@ def load_tools() -> list[BaseTool]:
 
 
 def cap(text: str, limit: int = MAX_OUTPUT_CHARS) -> str:
-    # shortcut: plain truncation, no artifact handle yet (Phase 2 adds offloading of big outputs)
+    # shortcut: plain truncation, big outputs are offloaded to artifacts by the graph, see graph/context.py
     text = redact(text)  # never feed recognisable API keys/bearer tokens back to the model
     if len(text) <= limit:
         return text

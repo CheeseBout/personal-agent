@@ -1,4 +1,4 @@
-"""Phase 7 backend: settings / secrets / policy editor, attachments and speech-to-text over the WebSocket."""
+"""Daemon admin API: settings / secrets / policy editor, attachments and speech-to-text over the WebSocket."""
 
 from __future__ import annotations
 

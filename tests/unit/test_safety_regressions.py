@@ -1,4 +1,4 @@
-"""Regression tests for the issues found in the Phase 3 security review."""
+"""Regression tests for issues found in the safety / sandbox review."""
 
 import json
 import threading

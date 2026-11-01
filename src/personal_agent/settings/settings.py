@@ -162,7 +162,7 @@ DEFAULT_BLOCK_PROCESSES = ["keepass.exe", "keepassxc.exe", "bitwarden.exe", "1pa
 
 
 class ScreenCfg(BaseModel):
-    """Screen perception and control (docs/phase8.md). Privacy first: blocked windows are never captured, read or controlled."""
+    """Screen perception and control (docs/security.md). Privacy first: blocked windows are never captured, read or controlled."""
 
     agent_view: bool = True  # the agent may look at the screen (screen_describe / screen_ocr / ui_tree); each view is shown to you
     control: bool = True  # the agent may ask to click/type (every use still needs your approval)

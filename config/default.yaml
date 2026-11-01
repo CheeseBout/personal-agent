@@ -47,7 +47,7 @@ budgets:                  # per task
   max_verifications: 4
   daily_max_tokens: 1000000   # across ALL tasks, persisted; checked before every LLM call
   daily_max_cost_usd: 2.00
-# Sub-agents (Phase 5). The supervisor delegates INDEPENDENT information-gathering steps to workers that run in parallel,
+# Sub-agents. The supervisor delegates INDEPENDENT information-gathering steps to workers that run in parallel,
 # each with its own small context and only the tools listed for its role. Workers never ask for approval: if a call would
 # need it they stop and report it, and the supervisor handles it in its own (gated) loop. Every worker call is policy-checked.
 workers:
@@ -65,7 +65,7 @@ workers:
     comms:    {model_role: fast,   tools: [email_search, email_read, calendar_list, artifact_read]}
     coder:    {model_role: worker, private_context: false, tools: [sandbox_stage, run_python, sandbox_run, sandbox_changes, artifact_read]}
 rag:
-  embedding: {provider: ollama, model: bge-m3, dim: 1024}   # local: `ollama pull bge-m3`; changing model/dim means re-indexing (docs/phase4.md)
+  embedding: {provider: ollama, model: bge-m3, dim: 1024}   # local: `ollama pull bge-m3`; changing model/dim means re-indexing
   chunk_chars: 900
   overlap_chars: 120
   top_k: 5
@@ -92,7 +92,7 @@ observability:
 sandbox:
   idle_timeout_s: 300
   network: false
-# Screen perception and control (Phase 8). All keys are optional; defaults live in settings.py (ScreenCfg). Edit in Settings -> Screen.
+# Screen perception and control. All keys are optional; defaults live in settings.py (ScreenCfg). Edit in Settings -> Screen.
 # screen:
 #   agent_view: true              # the agent may look at the screen (every look is shown to you)
 #   control: true                 # the agent may ask to click/type (each call still needs your approval)

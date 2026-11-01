@@ -21,7 +21,7 @@ dependencies = [
   "httpx==0.28.1",
   "structlog==26.1.0",
   "ddgs==9.16.1",
-  # Phase 4 (all small, pure-Python or a tiny wheel): vector search, documents, calendar, folder watching
+  # vector search, documents, calendar, folder watching
   "sqlite-vec==0.1.9",
   "pypdf==6.21.4",
   "python-docx==1.2.0",

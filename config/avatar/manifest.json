@@ -1,7 +1,7 @@
 {
   "name": "default",
   "version": 1,
-  "note": "The default skin is drawn in code (ui/skin.py). To make your own, copy this folder's idea to config/avatar/<name>/ with sprite files; see docs/skins.md.",
+  "note": "The default skin is drawn in code (ui/skin.py). To make your own, copy this folder's idea to config/avatar/<name>/ with sprite files; see docs/development.md (Avatar skins).",
   "size": [128, 128],
   "fallback": "idle",
   "states": {

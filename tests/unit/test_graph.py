@@ -225,7 +225,7 @@ async def test_large_tool_output_is_offloaded_with_handle(env: Path) -> None:
     assert artifact_read.invoke({"artifact_id": "../../etc"}).startswith("ERROR")
 
 
-# ---- carried over from phase 1 ---------------------------------------------------------------------------
+# ---- basic loop behaviour ---------------------------------------------------------------------------
 async def test_unknown_tool_is_denied_not_executed() -> None:
     g, _, _ = make(FakeBrain(ScriptedModel(responses=[call("format_disk", {}), answer("sorry")]), intents=[TASK]))
     denied = tool_msgs(await run(g, "do it"))[0]

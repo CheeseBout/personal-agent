@@ -1,4 +1,4 @@
-"""Phase 8 without touching the real screen: privacy / safety rules, key parsing, the control engine on a fake backend, tool wiring."""
+"""Screen features without touching the real screen: privacy / safety rules, key parsing, the control engine on a fake backend, tool wiring."""
 
 from __future__ import annotations
 

@@ -1,4 +1,4 @@
-"""Phase 8 end to end on your REAL desktop: UI + daemon + real models + real screen.
+"""Screen features end to end on your REAL desktop: UI + daemon + real models + real screen.
 
 Run from the repo root:  python -m uv run python scripts/agent_screen_e2e.py   (needs API keys in ./.env; costs a few cents)
 It presses the capture / watch hotkeys, then asks the agent to click the Save button of a small test window. You must see:

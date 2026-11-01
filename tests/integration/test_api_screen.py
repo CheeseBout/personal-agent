@@ -1,4 +1,4 @@
-"""Phase 8 through the real daemon app: continuous-mode switch, events pushed to the UI, own-pid protection, kill switch, settings."""
+"""Screen features through the real daemon app: continuous-mode switch, events pushed to the UI, own-pid protection, kill switch, settings."""
 
 from __future__ import annotations
 

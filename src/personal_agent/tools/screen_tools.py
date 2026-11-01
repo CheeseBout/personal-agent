@@ -1,4 +1,4 @@
-"""Screen perception and control tools (Phase 8). Viewing is T0 but tainted + privacy-filtered + visible to you; control is T2 per call.
+"""Screen perception and control tools. Viewing is T0 but tainted + privacy-filtered + visible to you; control is T2 per call.
 
 Everything read from the screen (pixels, OCR text, window titles, UI element names) is UNTRUSTED DATA: it can contain text written
 to manipulate an AI. These tools say so in their output, taint the task, and `ui_act` always needs a fresh human approval."""
