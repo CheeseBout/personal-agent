@@ -10,7 +10,7 @@ from urllib.parse import quote, urlparse
 import httpx
 from langchain_core.tools import tool
 
-from personal_agent.observability.logging import redact
+from personal_agent.observability.logging import redact, register_secret
 from personal_agent.policy.engine import ToolMeta
 from personal_agent.settings.secrets import get_secret
 from personal_agent.tools import net
@@ -111,6 +111,7 @@ def http_request(method: str, url: str, headers: dict[str, str] | None = None, j
         spec = (cfg.get("secrets") or {}).get(secret)
         if spec is None or not (secret_value := get_secret(secret)):
             return "ERROR: blocked: that secret is not allowed for this host or has no value"
+        register_secret(secret_value)  # named in policy.yaml under any name: still a secret, never to be echoed back to the model
         hdrs[spec.get("header", "Authorization")] = spec.get("prefix", "Bearer ") + secret_value
     content = json.dumps(json_body).encode() if json_body is not None else (body.encode() if body else None)
     if json_body is not None:

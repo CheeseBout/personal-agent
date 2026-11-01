@@ -261,7 +261,7 @@ def test_keystrokes_are_never_sent_when_the_target_cannot_be_brought_to_the_fron
     log = runner(be).run([Action(op="type", window="Notes", name="Body", text="rm -rf /"), Action(op="key", window="Notes", keys="enter")])
     assert len(log) == 1 and "could not bring" in log[0] and not any(x.startswith(("type", "press")) for x in be.log)
     be2 = FakeBackend()
-    fgs = iter([be2.wins[0]] * 1 + [win("Other", hwnd=7)])  # in front when checked, stolen right before typing
+    fgs = iter([be2.wins[0]] * 2 + [win("Other", hwnd=7)])  # in front when checked twice, stolen right before the characters go out
     be2.foreground = lambda: next(fgs, win("Other", hwnd=7))
     log = runner(be2).run([Action(op="type", window="Notes", name="Body", text="secret")])
     assert "front window changed" in log[0] and not any(x.startswith("type") for x in be2.log)
@@ -297,6 +297,14 @@ def test_typing_without_a_named_field_checks_what_actually_has_focus() -> None:
     # named field + unknown focus info: allowed (the element itself was checked)
     be.focus_pw, be.log = None, []
     assert runner(be).run([Action(op="type", window="Notes", name="Body", text="x")])[0].startswith("1. typed")
+
+
+def test_keys_are_not_sent_if_the_front_window_changes_before_they_go_out() -> None:
+    be = FakeBackend()
+    fgs = iter([be.wins[0], win("Other", hwnd=7)])  # in front for the focus step, replaced right before the key press
+    be.foreground = lambda: next(fgs, win("Other", hwnd=7))
+    log = runner(be).run([Action(op="key", window="Notes", keys="ctrl+s")])
+    assert "front window changed" in log[0] and not any(x.startswith("press") for x in be.log)
 
 
 def test_single_character_keys_are_treated_like_typing_but_shortcuts_are_not() -> None:

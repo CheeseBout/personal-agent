@@ -334,3 +334,31 @@ def test_file_read_denies_when_the_opened_file_is_somewhere_else(ws: Path, monke
     monkeypatch.setattr(files, "_opened_path", lambda f: str(ws.parent / "outside" / "secret.txt"))
     out = files.file_read.invoke({"path": str(ws / "ok.txt")})
     assert "TOP-SECRET" not in out and "denied" in out.lower()
+
+
+def test_pending_approvals_are_redacted_at_the_boundary_even_for_rows_written_earlier(tmp_path: Path) -> None:
+    import sqlite3
+    import time
+
+    from personal_agent.policy.approvals import ApprovalStore
+
+    st = ApprovalStore(tmp_path / "p.db")
+    with sqlite3.connect(tmp_path / "p.db") as db:  # a row written by an older version that stored the preview as it was
+        db.execute("INSERT INTO approvals (thread_id,call_id,tool,args,tier,risk,preview,tainted,reason,status,created,expires_at) "
+                   "VALUES ('t','c','file_write','{}','T2','low','secret sk-abcdefghijklmnop here',0,'Bearer abc.def.ghi','pending',?,?)", (time.time(), time.time() + 60))
+    shown = str(st.pending())
+    assert "sk-abcdefghijklmnop" not in shown and "abc.def.ghi" not in shown
+
+
+def test_secrets_injected_into_mcp_servers_and_http_headers_are_masked_by_value(monkeypatch: pytest.MonkeyPatch) -> None:
+    from personal_agent import mcp_client
+    from personal_agent.observability.logging import forget_secrets
+
+    forget_secrets()
+    value = "credential-with-an-odd-name-4d2e9b"
+    monkeypatch.setattr(mcp_client, "get_secret", lambda n: value if n == "MY_ODDLY_NAMED_CREDENTIAL" else None)  # no _KEY / _TOKEN suffix
+    try:
+        spec = mcp_client._connection({"command": "x", "env": {"A": "${MY_ODDLY_NAMED_CREDENTIAL}"}})
+        assert value in str(spec) and value not in redact(f"server said {value}")
+    finally:
+        forget_secrets()

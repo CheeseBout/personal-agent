@@ -64,7 +64,8 @@ class ApprovalStore:
         if thread_id:
             q, a = q + " AND thread_id=?", (thread_id,)
         with closing(self._db()) as db:
-            return [{**dict(r), "tainted": bool(r["tainted"])} for r in db.execute(q + " ORDER BY id", a).fetchall()]
+            return [{**dict(r), "tainted": bool(r["tainted"]), "preview": redact(r["preview"] or ""), "reason": redact(r["reason"] or ""),
+                     "args": redact(r["args"] or "")} for r in db.execute(q + " ORDER BY id", a).fetchall()]
 
     def resolve(self, thread_id: str, call_id: str, status: str) -> None:
         with closing(self._db()) as db, db:

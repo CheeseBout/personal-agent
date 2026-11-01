@@ -283,6 +283,11 @@ class Runner:
                 return
         raise Refused(f"could not bring '{win.title[:40]}' to the front, so nothing was typed (Windows may be blocking focus changes)")
 
+    def _still_in_front(self, win: windows.WindowInfo) -> None:
+        fg = self.be.foreground()
+        if fg is None or fg.hwnd != win.hwnd:
+            raise Refused(f"the front window changed to '{fg.title[:40] if fg else '?'}' before sending keys; nothing was sent")
+
     def _focus_is_safe_for_text(self, el: uia.Element | None, printable: bool = True) -> None:
         """Characters go to whatever control has focus, not to the element we named. Refuse if that is a password field, and (when no
         field was named) if we cannot tell what it is."""
@@ -345,10 +350,9 @@ class Runner:
                 self._reachable(point, win)
                 self.be.click(point[0], point[1], "left", False)
                 self.expected = point
-            fg = self.be.foreground()
-            if fg is None or fg.hwnd != win.hwnd:
-                raise Refused(f"the front window changed to '{fg.title[:40] if fg else '?'}' before typing; nothing was typed")
+            self._still_in_front(win)
             self._focus_is_safe_for_text(el)
+            self._still_in_front(win)  # the focus query takes a moment: look once more right before the characters go out
             self.be.type_text(a.text or "")
             result = f"typed {len(a.text or '')} characters into {label}"
         elif a.op == "key":
@@ -357,6 +361,7 @@ class Runner:
                 self._reachable(point, win)
                 self.be.click(point[0], point[1], "left", False)
                 self.expected = point
+            self._still_in_front(win)
             vks = parse_keys(a.keys or "")
             single_char = len(vks) == 1 and (0x30 <= vks[0] <= 0x5A or vks[0] == 0x20)  # a bare letter / digit / space types text
             self._focus_is_safe_for_text(el, printable=single_char)

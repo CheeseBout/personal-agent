@@ -163,7 +163,7 @@ def create_app(brain: Brain | None = None, db_path: Path | None = None, token: s
         async with s.turn_lock:
             s.active_threads.add(tid)
             try:
-                await run_turn({"thread_id": tid, "text": f"[scheduled task #{job['id']}] {job['prompt']}"}, "user", sink)
+                await run_turn({"thread_id": tid, "text": f"[scheduled task #{job['id']}] {job['prompt']}", "untrusted": True}, "user", sink)
             finally:
                 s.active_threads.discard(tid)
         last = events[-1] if events else {"type": "error", "code": "no_result"}
@@ -233,7 +233,13 @@ def create_app(brain: Brain | None = None, db_path: Path | None = None, token: s
                 except (ValueError, KeyError):  # invalid JSON (JSONDecodeError is a ValueError) or a binary frame (no "text")
                     await send({"type": "error", "code": "bad_request", "message": "message is not valid JSON"})
                     continue
-                await handle(msg, send)
+                try:
+                    await handle(msg, send)
+                except (WebSocketDisconnect, WebSocketDisconnected, asyncio.CancelledError):
+                    raise
+                except Exception:
+                    log.exception("ws_message_failed")
+                    await send({"type": "error", "code": "internal", "message": "the request could not be processed"})
         except (WebSocketDisconnect, WebSocketDisconnected):  # the 2nd one: a send failed first, then we tried to read
             return
         finally:
@@ -429,7 +435,7 @@ def create_app(brain: Brain | None = None, db_path: Path | None = None, token: s
             except (ValueError, OSError, UnsupportedDocument) as e:
                 return await send({"type": "error", "code": "bad_request", "message": str(e)[:200]})
             graph_input = {"messages": [HumanMessage(content)]}
-            if files:  # attached documents / images / transcripts are untrusted text: side effects after them need approval
+            if files or msg.get("untrusted"):  # attachments are untrusted text; a scheduled run is unattended: side effects need approval
                 graph_input["tainted"] = True
         # Budgets stop runs in code; this is only a backstop against a routing bug.
         config = app.state.tracing.run_config(tid, settings.budgets.max_steps * 8 + 40)

@@ -25,6 +25,7 @@ import structlog
 import yaml
 from langchain_core.tools import BaseTool
 
+from personal_agent.observability.logging import register_secret
 from personal_agent.policy.engine import ToolMeta
 from personal_agent.settings.secrets import get_secret
 from personal_agent.settings.settings import data_dir
@@ -59,7 +60,12 @@ def set_enabled(name: str, enabled: bool) -> bool:
 def _connection(spec: dict[str, Any]) -> dict[str, Any]:
     if "url" in spec:
         return {"transport": "streamable_http", "url": str(spec["url"])}
-    env = {k: _VAR.sub(lambda m: get_secret(m.group(1)) or "", str(v)) for k, v in (spec.get("env") or {}).items()}
+    def resolve(m: re.Match[str]) -> str:
+        value = get_secret(m.group(1)) or ""
+        register_secret(value)  # whatever the config calls it, a value injected into a server's environment is a secret
+        return value
+
+    env = {k: _VAR.sub(resolve, str(v)) for k, v in (spec.get("env") or {}).items()}
     return {"transport": "stdio", "command": str(spec["command"]), "args": [str(a) for a in spec.get("args", [])], "env": env or None}
 
 

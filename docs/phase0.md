@@ -10,6 +10,7 @@ See `docs/adr/`. PySide6, SQLite+sqlite-vec+FTS5, cloud embeddings default, keyl
 Pinned in `pyproject.toml` from PyPI latest on 2026-10-31; `uv lock` resolves 162 packages including every extra. `tenacity` is intentionally not pinned directly (`google-genai` needs `<9.2.0`). LangGraph/Langfuse/MCP-adapter *APIs* are not yet checked against docs; each is checked in the phase that first uses it.
 
 ## Resource targets (measured in Phase 9, tracked from Phase 1)
+> **Superseded by `docs/adr/0011-resource-targets.md`** (measured in Phase 9: the UI and combined targets below were not reachable; new targets and reasons are there).
 - Idle daemon (no optional local models): <= 100 MB RSS
 - Idle UI + avatar: <= 60 MB RSS  (combined < 150 MB)
 - Idle CPU: ~0% (no polling; avatar timer only while animating)

@@ -29,7 +29,8 @@ iscc packaging\installer.iss          # -> dist\PersonalAgentSetup.exe
 installer triggers SmartScreen warnings.
 
 ## Verified (2026-11-01)
-- Build completes; `agent-core.exe` starts without any environment help, answers `/health` in 3.7-4.3 s, finds the bundled config and policy, enforces the token.
+- Build completes (twice: before and after the review fixes); `agent-core.exe` starts without any environment help, answers `/health` in 3.6 s warm (up to ~9 s the very first time after a build, while Windows
+  scans the new files), finds the bundled config and policy, enforces the token.
 - A real question (Haiku classifier/planner, Gemini worker) is answered by the packaged daemon: the lazily imported provider SDKs are in the bundle.
 - `agent-ui.exe` starts and keeps running (offscreen); `agent-chat.exe` starts.
 - Idle memory of the packaged daemon: about 119 MB at start, about 198 MB after the first real question (same order as the source install, see ADR-0011).

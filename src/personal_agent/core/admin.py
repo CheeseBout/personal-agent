@@ -10,6 +10,7 @@ import asyncio
 import os
 import re
 import shutil
+import uuid
 from pathlib import Path
 from typing import Any
 
@@ -176,14 +177,16 @@ def policy_save(text: str) -> None:
     if not isinstance(cfg["paths"].get("allow"), list) or not isinstance(cfg["paths"].get("deny", []), list):
         raise ValueError("paths.allow and paths.deny must be lists")
     target = user_policy_path()  # edits always go to your copy in %APPDATA%: the shipped file may sit in a read-only install folder
-    tmp = target.with_suffix(".yaml.new")
+    tmp = target.with_suffix(f".yaml.{os.getpid()}-{uuid.uuid4().hex[:8]}.new")  # unique: two saves can never collide on one temp file
     tmp.write_text(text, encoding="utf-8")
     try:
         eng = PolicyEngine(tmp)  # load and exercise the file with the real engine (paths, regexes, domains)
         eng.check_path(os.getcwd())
         eng.check_command("whoami")
         eng.check_domain("https://example.com")
-        shutil.copyfile(policy_file(), target.with_suffix(".yaml.bak"))  # what was in force until now
+        bak = target.with_suffix(f".yaml.bak.{uuid.uuid4().hex[:8]}")
+        shutil.copyfile(policy_file(), bak)  # what was in force until now
+        os.replace(bak, target.with_suffix(".yaml.bak"))  # atomic: the backup is never half-written
         os.replace(tmp, target)
     except Exception as e:
         tmp.unlink(missing_ok=True)
