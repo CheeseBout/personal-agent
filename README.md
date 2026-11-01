@@ -22,6 +22,12 @@ python -m uv run mypy src
 
 The per-install API token is created on first start and stored in Credential Manager; logs go to `%APPDATA%\personal-agent\logs\`.
 
+## Phase 5: sub-agents
+For plans with two or more independent lookups the supervisor hands them to small parallel workers (cheap Haiku by default), each with
+its own context and only the tools of its role (`workers:` in `config/default.yaml`). Workers never ask you for approval: if something
+needs it they stop and report it, and the supervisor asks you through the normal approval card. `agent-chat` shows
+`[worker s1/web] done ...` lines and the roles in the plan. Switch off with `workers.enabled: false`. Details and limits: `docs/phase5.md`.
+
 ## Phase 4: tools, knowledge and memory
 - Documents: put md/docx/pdf in the workspace, ask the agent to `rag_ingest` them (or list a folder under `rag.watch` in
   `config/default.yaml` to keep it indexed automatically), then ask questions; answers cite file / heading / page.

@@ -14,7 +14,7 @@ from personal_agent.settings.settings import Budgets
 
 def new_used() -> dict[str, Any]:
     return {"steps": 0, "tool_calls": 0, "tokens": 0, "cost": 0.0, "fails": 0, "verifies": 0,
-            "started": time.time(), "sigs": []}
+            "started": time.time(), "sigs": [], "worker_steps": 0}
 
 
 def exceeded(used: dict[str, Any], b: Budgets) -> str | None:

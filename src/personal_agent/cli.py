@@ -26,8 +26,12 @@ def show(ev: dict[str, Any]) -> None:
         print(f"  [intent] {ev['intent']} (confidence {ev['confidence']:.2f}, plan={ev['needs_plan']})")
     elif t == "plan":
         print(f"  [plan] {ev['objective']}")
+        for step, role in zip(ev["steps"], ev.get("roles", []), strict=False):
+            print(f"     - ({role}) {step}")
         for c in ev["success_criteria"]:
             print(f"     done when: {c}")
+    elif t == "worker":
+        print(f"  [worker {ev['step']}/{ev['role']}] {ev['status']} ({ev['tokens']} tokens, ~${ev['cost']:.4f}): {ev['summary'][:140]}")
     elif t == "verdict":
         print(f"  [verify] {ev['status']} {ev['notes']}")
     elif t == "tool_call":

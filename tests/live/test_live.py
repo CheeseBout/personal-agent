@@ -35,7 +35,7 @@ def graph() -> tuple[Any, Meter]:
 
 
 async def ask(g: Any, text: str, tid: str) -> dict[str, Any]:
-    out: dict[str, Any] = await g.ainvoke({"messages": [HumanMessage(text)]}, {"configurable": {"thread_id": tid}})
+    out: dict[str, Any] = await g.ainvoke({"messages": [HumanMessage(text)]}, {"configurable": {"thread_id": tid}, "recursion_limit": 100})
     return out
 
 
@@ -197,3 +197,29 @@ async def test_web_fetch_real_page_and_ssrf_block(env: Path) -> None:
     assert "Example Domain" in out and out.startswith("[UNTRUSTED WEB CONTENT")
     assert web_fetch.invoke({"url": "http://127.0.0.1:9/"}).startswith("ERROR: blocked")
     assert web_fetch.invoke({"url": "http://169.254.169.254/latest/meta-data/"}).startswith("ERROR: blocked")
+
+
+# ---- Phase 5: real supervisor + parallel sub-agents -----------------------------------------------------------------
+async def test_real_supervisor_delegates_independent_lookups_in_parallel(env: Path, real_embedder: Any) -> None:
+    import time
+
+    from personal_agent import services as svc
+
+    make_corpus(env)
+    for f in ("nghi-phep.md", "expenses.docx"):
+        svc.rag().ingest(env / f)
+    (env / "nghi-phep.md").write_text((env / "nghi-phep.md").read_text(encoding="utf-8")
+                                      + "\n# Phụ cấp\nPhụ cấp ăn trưa là 40.000 đồng mỗi ngày.\n", encoding="utf-8")
+    svc.rag().ingest(env / "nghi-phep.md")
+    g, m = graph()
+    t0 = time.time()
+    out = await ask(g, "Using my indexed documents, answer three SEPARATE questions and look each one up on its own: "
+                       "(1) how many paid vacation days do employees get per year, (2) above what dollar amount are receipts required "
+                       "for expense reimbursement, (3) how many remote-work days per week are allowed. Then give me one short summary.", "multi")
+    steps = [(s["id"], s["role"], s["status"]) for s in out["goal"]["steps"]]
+    print("\nSTEPS:", steps, "\nworker_runs:", out["worker_runs"], "| seconds:", round(time.time() - t0, 1),
+          "\nused:", out["used"], "\nspend:", m.today(), "\nFINAL:", ascii(out["final"][:400]))
+    assert not out["stop_reason"] and out["verdict"] == "done"
+    assert "12" in out["final"] and "50" in out["final"] and "2" in out["final"]
+    assert out["worker_runs"] >= 2  # the planner chose sub-agents for the independent lookups
+    assert m.today()["cost_usd"] < 0.30

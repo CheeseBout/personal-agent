@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
 from langgraph.graph import MessagesState
 from pydantic import BaseModel, Field
@@ -26,11 +26,16 @@ class Intent(BaseModel):
     clarifying_question: str | None = None  # one question, only when the request is too ambiguous to act on
 
 
+StepRole = Literal["main", "web", "research", "files", "memory", "comms", "coder"]
+
+
 class Step(BaseModel):
     id: str
     description: str
     depends_on: list[str] = Field(default_factory=list)
     parallel: bool = False
+    # who does it: "main" = the supervisor itself (writes, sending, composing the answer); others = a sub-agent role
+    role: StepRole = "main"
 
 
 class Goal(BaseModel):
@@ -54,7 +59,19 @@ class Verdict(BaseModel):
     message: str = ""  # what is missing / the question for the user / the blocker
 
 
+def collect(old: list[dict[str, Any]] | None, new: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Reducer for parallel worker results; a {'_reset': True} entry clears the list (done by the merge node)."""
+    if new and new[0].get("_reset"):
+        return []
+    return [*(old or []), *new]
+
+
 class AgentState(MessagesState):
+    wave: list[str]  # step ids dispatched to workers in the current wave
+    wresults: Annotated[list[dict[str, Any]], collect]  # results of the workers of the current wave
+    evidence: str  # first-hand tool outputs gathered by workers (what the verifier checks)
+    findings: str  # compact worker summaries (untrusted) shown in the mission block
+    worker_runs: int
     lang: str
     intent: dict[str, Any] | None
     goal: dict[str, Any] | None

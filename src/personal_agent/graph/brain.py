@@ -27,7 +27,8 @@ class LiveBrain:
         self._cache: dict[tuple[str, str], Runnable[Any, Any]] = {}
 
     def chat(self, role: str, tools: Sequence[BaseTool] = ()) -> Runnable[Any, Any]:
-        k = (role, "chat")
+        # the tool set is part of the key: a worker with 3 tools must not get the main loop's model bound to all of them
+        k = (role, "chat:" + ",".join(sorted(t.name for t in tools)))
         if k not in self._cache:
             self._cache[k] = get_chat_model(role, tools, self._s)
         return self._cache[k]

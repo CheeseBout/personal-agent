@@ -40,6 +40,23 @@ budgets:                  # per task
   max_verifications: 4
   daily_max_tokens: 1000000   # across ALL tasks, persisted; checked before every LLM call
   daily_max_cost_usd: 2.00
+# Sub-agents (Phase 5). The supervisor delegates INDEPENDENT information-gathering steps to workers that run in parallel,
+# each with its own small context and only the tools listed for its role. Workers never ask for approval: if a call would
+# need it they stop and report it, and the supervisor handles it in its own (gated) loop. Every worker call is policy-checked.
+workers:
+  enabled: true
+  max_parallel: 3
+  max_runs_per_task: 6
+  max_total_steps: 30
+  min_delegable: 2
+  budget: {max_steps: 8, max_tool_calls: 12, max_seconds: 180, max_tokens: 40000, max_cost_usd: 0.15}
+  roles:
+    web:      {model_role: fast,   private_context: false, tools: [web_search, web_fetch, browser_read, artifact_read]}
+    research: {model_role: fast,   tools: [web_search, web_fetch, browser_read, rag_search, rag_list, recall, file_read, file_list, file_search, artifact_read]}
+    files:    {model_role: fast,   tools: [file_read, file_list, file_search, artifact_read]}
+    memory:   {model_role: fast,   tools: [rag_search, rag_list, recall, artifact_read]}
+    comms:    {model_role: fast,   tools: [email_search, email_read, calendar_list, artifact_read]}
+    coder:    {model_role: worker, private_context: false, tools: [sandbox_stage, run_python, sandbox_run, sandbox_changes, artifact_read]}
 rag:
   embedding: {provider: google, model: gemini-embedding-001, dim: 768}   # OpenAI key had no credit; see docs/phase4.md
   chunk_chars: 900

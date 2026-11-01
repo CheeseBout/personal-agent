@@ -89,8 +89,34 @@ class SchedulerCfg(BaseModel):
     grace_minutes: int = 60  # a run missed while the daemon was down is still run if it is this recent
 
 
+class WorkerBudget(BaseModel):
+    max_steps: int = 8
+    max_tool_calls: int = 12
+    max_seconds: int = 180
+    max_tokens: int = 40_000
+    max_cost_usd: float = 0.15
+
+
+class WorkerRole(BaseModel):
+    model_role: str = "fast"  # which entry of `models:` runs this worker (Haiku by default)
+    tools: list[str] = Field(default_factory=list)
+    # True: the worker may touch private data, so reading untrusted content makes its later side effects need approval
+    private_context: bool = True
+
+
+class WorkersCfg(BaseModel):
+    enabled: bool = True
+    max_parallel: int = 3
+    max_runs_per_task: int = 6
+    max_total_steps: int = 30  # model calls ALL workers of one task may make together
+    min_delegable: int = 2  # delegate only when the plan has at least this many independent sub-agent steps
+    budget: WorkerBudget = Field(default_factory=WorkerBudget)
+    roles: dict[str, WorkerRole] = Field(default_factory=dict)
+
+
 class Settings(BaseModel):
     agent: AgentCfg = Field(default_factory=AgentCfg)
+    workers: WorkersCfg = Field(default_factory=WorkersCfg)
     rag: RagCfg = Field(default_factory=RagCfg)
     memory: MemoryCfg = Field(default_factory=MemoryCfg)
     scheduler: SchedulerCfg = Field(default_factory=SchedulerCfg)

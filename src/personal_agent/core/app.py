@@ -356,7 +356,11 @@ def create_app(brain: Brain | None = None, db_path: Path | None = None, token: s
         elif node == "plan" and update.get("goal"):
             g = update["goal"]
             await send({"type": "plan", "objective": g["objective"], "success_criteria": g["success_criteria"],
-                        "steps": [s["description"] for s in g["steps"]]})
+                        "steps": [s["description"] for s in g["steps"]], "roles": [s.get("role", "main") for s in g["steps"]]})
+        elif node == "worker":  # one event per finished sub-agent (compact: the full detail stays in the audit log)
+            for r in update.get("wresults", []):
+                await send({"type": "worker", "step": r["step"], "role": r["role"], "status": r["status"],
+                            "summary": redact(r["summary"])[:300], "tokens": r["used"]["tokens"], "cost": r["used"]["cost"]})
         elif node == "verify":
             await send({"type": "verdict", "status": update.get("verdict"), "notes": redact(update.get("notes", ""))})
         if node == "gate":

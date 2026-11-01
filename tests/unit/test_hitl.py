@@ -27,9 +27,9 @@ CFG = {"configurable": {"thread_id": "t"}, "recursion_limit": 100}
 def make(tmp_path: Path, worker: Any, saver: Any = None, **brain_kw: Any) -> SimpleNamespace:
     s = load_settings()
     audit, apps, kill = AuditLog(tmp_path / "audit.db"), ApprovalStore(tmp_path / "ap.db"), KillSwitch()
-    g = build_graph(saver or InMemorySaver(), FakeBrain(worker, **brain_kw), s, Meter(tmp_path / "u.db", s.pricing),
-                    audit, apps, kill)
-    return SimpleNamespace(g=g, audit=audit, apps=apps, kill=kill, s=s)
+    brain = FakeBrain(worker, **brain_kw)
+    g = build_graph(saver or InMemorySaver(), brain, s, Meter(tmp_path / "u.db", s.pricing), audit, apps, kill)
+    return SimpleNamespace(g=g, audit=audit, apps=apps, kill=kill, s=s, brain=brain)
 
 
 async def turn(h: SimpleNamespace, text: str = "do it") -> dict[str, Any]:
