@@ -53,6 +53,7 @@ def public_settings(s: Settings) -> dict[str, Any]:
         "budgets": {k: getattr(s.budgets, k) for k in sorted(BUDGET_KEYS)},
         "voice": s.voice.model_dump(),
         "ui": s.ui.model_dump(),
+        "screen": s.screen.model_dump(),
         "rag_embedding": s.rag.embedding.model_dump(),
         "observability": s.observability.model_dump(),
         "secrets": secrets_status(),
@@ -87,13 +88,13 @@ def validate_patch(s: Settings, patch: dict[str, Any]) -> dict[str, Any]:
                 if isinstance(v, bool) or not isinstance(v, int | float) or v <= 0:
                     raise ValueError(f"budgets.{k} must be a positive number")
             out["budgets"] = val
-        elif key in ("voice", "ui", "observability") and isinstance(val, dict):
+        elif key in ("voice", "ui", "observability", "screen") and isinstance(val, dict):
             out[key] = val  # field names/types are validated by the pydantic model below
         else:
             raise ValueError(f"settings key '{key}' cannot be changed from the UI")
     # Full validation (types, unknown fields inside voice/ui/observability) on a copy before anything is saved.
     base = s.model_dump()
-    for section in ("voice", "ui", "observability"):
+    for section in ("voice", "ui", "observability", "screen"):
         for k, v in out.get(section, {}).items():
             if k not in base[section] or (isinstance(base[section][k], dict) and not isinstance(v, dict)):
                 raise ValueError(f"unknown setting {section}.{k}")

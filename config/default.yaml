@@ -92,3 +92,12 @@ observability:
 sandbox:
   idle_timeout_s: 300
   network: false
+# Screen perception and control (Phase 8). All keys are optional; defaults live in settings.py (ScreenCfg). Edit in Settings -> Screen.
+# screen:
+#   agent_view: true              # the agent may look at the screen (every look is shown to you)
+#   control: true                 # the agent may ask to click/type (each call still needs your approval)
+#   watch_interval_s: 2.0         # continuous mode: seconds between captures
+#   watch_change_threshold: 8     # perceptual-hash distance (1-64) that counts as a change
+#   watch_max_minutes: 30         # continuous mode switches itself off after this long
+#   max_actions: 8                # steps one approval may cover
+#   block_titles: [keepass, banking, ...]   # replaces the built-in privacy list when set

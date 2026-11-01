@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QPlainTextEdit,
     QPushButton,
     QSpinBox,
     QTabWidget,
@@ -132,6 +133,35 @@ class SettingsDialog(QDialog):
         bf.addRow(self.cap_labels[1], self.cap_cost)
         self.tabs.addTab(b, "")
 
+        sc = QWidget()
+        scf = QFormLayout(sc)
+        self.agent_view, self.agent_control = QCheckBox(), QCheckBox()
+        self.block_titles, self.block_procs = QPlainTextEdit(), QPlainTextEdit()
+        self.block_titles.setFixedHeight(90)
+        self.block_procs.setFixedHeight(70)
+        self.watch_interval, self.watch_threshold = QDoubleSpinBox(), QSpinBox()
+        self.watch_interval.setRange(0.5, 60)
+        self.watch_interval.setSingleStep(0.5)
+        self.watch_threshold.setRange(1, 64)
+        self.watch_minutes, self.max_actions = QSpinBox(), QSpinBox()
+        self.watch_minutes.setRange(1, 480)
+        self.max_actions.setRange(1, 20)
+        self.screen_rows = [("Let the agent look at the screen", "Cho agent xem màn hình", self.agent_view),
+                            ("Let the agent use mouse/keyboard (each use needs approval)", "Cho agent dùng chuột/bàn phím (mỗi lần cần duyệt)", self.agent_control),
+                            ("Private window titles (one per line, never captured or controlled)", "Tiêu đề cửa sổ riêng tư (mỗi dòng một mục, không bao giờ chụp/điều khiển)", self.block_titles),
+                            ("Private programs (exe names)", "Chương trình riêng tư (tên exe)", self.block_procs),
+                            ("Watching: seconds between captures", "Theo dõi: số giây giữa các lần chụp", self.watch_interval),
+                            ("Watching: change sensitivity (1-64, lower = more sensitive)", "Theo dõi: độ nhạy thay đổi (1-64, thấp = nhạy hơn)", self.watch_threshold),
+                            ("Watching: switches itself off after (minutes)", "Theo dõi: tự tắt sau (phút)", self.watch_minutes),
+                            ("Steps one approval may cover", "Số bước tối đa mỗi lần duyệt", self.max_actions)]
+        self._screen_labels: list[tuple[QLabel, str, str]] = []
+        for en, vi, w in self.screen_rows:
+            lbl = QLabel()
+            lbl.setWordWrap(True)
+            self._screen_labels.append((lbl, en, vi))
+            scf.addRow(lbl, w)
+        self.tabs.addTab(sc, "")
+
         a = QWidget()
         af = QFormLayout(a)
         self.about_ui, self.about_daemon, self.about_lf = QLabel(), QLabel(), QLabel()
@@ -145,9 +175,9 @@ class SettingsDialog(QDialog):
     def retranslate(self) -> None:
         self.setWindowTitle(tr("Settings", "Cài đặt"))
         for i, (en, vi) in enumerate((("General", "Chung"), ("Models", "Mô hình"), ("API keys", "Khóa API"), ("Voice", "Giọng nói"),
-                                      ("Budgets", "Ngân sách"), ("About", "Giới thiệu"))):
+                                      ("Budgets", "Ngân sách"), ("Screen", "Màn hình"), ("About", "Giới thiệu"))):
             self.tabs.setTabText(i, tr(en, vi))
-        for lbl, en, vi in self._labels + self._voice_labels:
+        for lbl, en, vi in self._labels + self._voice_labels + self._screen_labels:
             lbl.setText(tr(en, vi))
         self.folder_btn.setText(tr("Add a folder…", "Thêm thư mục…"))
         self.cap_labels[0].setText(tr("Daily token cap", "Giới hạn token mỗi ngày"))
@@ -180,6 +210,16 @@ class SettingsDialog(QDialog):
         self.cap_cost.setValue(float(ev["budgets"]["daily_max_cost_usd"]))
         self.about_lf.setText(tr("on", "bật") if ev["observability"]["langfuse_enabled"] and
                               ev["secrets"].get("LANGFUSE_PUBLIC_KEY") else tr("off (no keys or disabled)", "tắt (thiếu khóa hoặc bị tắt)"))
+        sc = ev.get("screen")
+        if sc:
+            self.agent_view.setChecked(sc["agent_view"])
+            self.agent_control.setChecked(sc["control"])
+            self.block_titles.setPlainText(os.linesep.join(sc["block_titles"]))
+            self.block_procs.setPlainText(os.linesep.join(sc["block_processes"]))
+            self.watch_interval.setValue(sc["watch_interval_s"])
+            self.watch_threshold.setValue(sc["watch_change_threshold"])
+            self.watch_minutes.setValue(sc["watch_max_minutes"])
+            self.max_actions.setValue(sc["max_actions"])
         self._load_models(ev)
         self._load_keys(ev["secrets"])
 
@@ -278,6 +318,16 @@ class SettingsDialog(QDialog):
                 if v != d["budgets"][k]}
         if caps:
             patch["budgets"] = caps
+        if "screen" in d:
+            def lines(w: QPlainTextEdit) -> list[str]:
+                return [ln.strip() for ln in w.toPlainText().splitlines() if ln.strip()]
+
+            new_screen: dict[str, Any] = {"agent_view": self.agent_view.isChecked(), "control": self.agent_control.isChecked(),
+                          "block_titles": lines(self.block_titles), "block_processes": lines(self.block_procs),
+                          "watch_interval_s": round(self.watch_interval.value(), 1), "watch_change_threshold": self.watch_threshold.value(),
+                          "watch_max_minutes": self.watch_minutes.value(), "max_actions": self.max_actions.value()}
+            if ch := {k: v for k, v in new_screen.items() if v != d["screen"][k]}:
+                patch["screen"] = ch
         try:
             if self.autostart.isChecked() != system.autostart_enabled():
                 system.set_autostart(self.autostart.isChecked())

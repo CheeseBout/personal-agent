@@ -22,6 +22,12 @@ python -m uv run mypy src
 
 The per-install API token is created on first start and stored in Credential Manager; logs go to `%APPDATA%\personal-agent\logs\`.
 
+## Phase 8: screen perception and control
+`python -m uv sync --extra screen --extra ui --extra voice`. The agent can list windows, look at the screen with a vision model, read text locally (OCR), read a window's
+UI Automation tree and, with your approval for every call, click and type. Capture with `Ctrl+Alt+S`; continuous watching with `Ctrl+Alt+W` (red badge, auto-off, nothing saved).
+Password managers, banking and sign-in windows are blacked out; shells and the agent's own windows can never be controlled. Details, safety properties and limits: `docs/phase8.md`.
+Real-desktop checks: `python -m uv run python scripts/screen_check.py` and `scripts/agent_screen_e2e.py` (they move your mouse and type into a test window).
+
 ## Phase 7: desktop UI
 `python -m uv sync --extra ui --extra voice`, then `python -m uv run agent-ui`: tray icon, chat (markdown, attachments, pasted images, voice),
 approval center with diffs, manager pages (memory, documents, MCP, schedules, audit, usage, policy), settings, first-run wizard and a desktop

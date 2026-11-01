@@ -41,6 +41,7 @@ def load_tools() -> list[BaseTool]:
         python_exec,
         sandbox_tools,
         schedule_tools,
+        screen_tools,
         shell,
         web,
         web_tools,

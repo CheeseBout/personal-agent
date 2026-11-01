@@ -50,7 +50,7 @@ def test_report_joins_tokens_and_cost_per_day(tmp_path: Path) -> None:
 def test_old_events_are_pruned(tmp_path: Path) -> None:
     m = Metrics(tmp_path / "u.db")
     m.event("llm", "x", True, 1)
-    Metrics(tmp_path / "u.db", keep_days=0)  # everything is older than "now"
+    Metrics(tmp_path / "u.db", keep_days=-1)  # cutoff in the future: everything is "old" (keep_days=0 raced the ~15 ms Windows clock)
     assert m.report(1)["days"] == []
 
 

@@ -57,7 +57,7 @@ def parse_hotkey(spec: str) -> tuple[int, int]:
         raise ValueError(f"unknown modifier in '{spec}'")
     if key in _NAMED:
         vk = _NAMED[key]
-    elif len(key) == 1 and key.isalnum():
+    elif len(key) == 1 and key.isascii() and key.isalnum():
         vk = ord(key.upper())
     elif key.startswith("f") and key[1:].isdigit() and 1 <= int(key[1:]) <= 24:
         vk = 0x70 + int(key[1:]) - 1

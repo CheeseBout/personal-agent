@@ -27,6 +27,12 @@ from personal_agent.ui.client import DaemonClient
 from personal_agent.ui.i18n import set_language, tr
 from personal_agent.ui.model import Session
 from personal_agent.ui.pages import ManagerWindow
+from personal_agent.ui.screen import (
+    HighlightOverlay,
+    RegionSelector,
+    WatchIndicator,
+    capture_attachment,
+)
 from personal_agent.ui.settings_dialog import FirstRunWizard, SettingsDialog
 from personal_agent.ui.skin import draw_builtin, load_skin, skins_root
 from personal_agent.ui.system import Hotkeys
@@ -53,6 +59,11 @@ class UiApp:
         self.quick = QuickInput()
         self.bubble = SpeechBubble()
         self.recorder = Recorder(settings.voice.stt.max_seconds)
+        self.highlight = HighlightOverlay()
+        self.watch_badge = WatchIndicator()
+        self.region = RegionSelector()
+        self.screen_state = "off"
+        self._watch_actions: list[QAction] = []
         self.speaker = Speaker()
         self.hotkeys = Hotkeys()
         self.avatar = AvatarWindow(load_skin(settings.ui.skin), settings.ui.avatar_scale, settings.ui.avatar_always_on_top)
@@ -93,6 +104,9 @@ class UiApp:
         self.bubble.clicked.connect(self._bubble_clicked)
         self.tray.activated.connect(lambda r: self.show_chat() if r == QSystemTrayIcon.ActivationReason.Trigger else None)
         self.recorder.finished.connect(self._recorded)
+        self.watch_badge.clicked.connect(lambda: self.client.send({"type": "screen_mode", "action": "off"}))
+        self.region.selected.connect(lambda r: self.capture("region", tuple(r)))
+        self.region.cancelled.connect(lambda: self.say(tr("Capture cancelled.", "Đã hủy chụp."), ms=2000))
         self.recorder.failed.connect(lambda m: self.say(m, ms=3000))
         self.speaker.speaking_changed.connect(self._speaking)
         self.speaker.failed.connect(lambda m: self.say(tr("Cannot speak: {m}", "Không đọc được: {m}", m=m), ms=4000))
@@ -115,6 +129,11 @@ class UiApp:
                 self._action(sub, en, vi, lambda k=key: self.manager.open_page(k))
             self._action(m, "Settings", "Cài đặt", self.show_settings)
             m.addSeparator()
+            cap = m.addMenu(tr("Capture", "Chụp màn hình"))
+            self._action(cap, "Whole screen", "Toàn màn hình", lambda: self.capture("screen"))
+            self._action(cap, "Active window (in 2 s)", "Cửa sổ đang dùng (sau 2 giây)", self.capture_window_soon)
+            self._action(cap, "Select an area…", "Chọn một vùng…", self.capture_region)
+            self._watch_actions.append(self._action(m, "Watch the screen", "Theo dõi màn hình", self.toggle_watch))
             self._action(m, "Stop speaking", "Ngừng đọc", self.speaker.stop)
             self._action(m, "Pause agent (kill switch)", "Tạm dừng agent (công tắc khẩn)", self.kill)
             self._action(m, "Resume agent", "Cho agent chạy lại", lambda: self.client.send({"type": "release_kill"}))
@@ -137,7 +156,8 @@ class UiApp:
     # ---- connection ---------------------------------------------------------------------------------------------------------
     def on_connected(self) -> None:
         self.state.connected = True
-        for m in ({"type": "settings_get"}, {"type": "usage"}, {"type": "about"}):
+        for m in ({"type": "settings_get"}, {"type": "usage"}, {"type": "about", "ui_pid": os.getpid()},  # the pid keeps the agent off our windows
+                  {"type": "screen_mode", "action": "status"}):
             self.client.send(m)
         self._refresh_state()
         self.tray.setToolTip(self.session.agent_name)
@@ -192,6 +212,17 @@ class UiApp:
             self.speaker.stop()
         elif t == "schedule_run":
             self.tray.showMessage(self.session.agent_name, str(ev.get("status", "")))
+        elif t == "screen_mode":
+            self.on_screen_mode(ev)
+        elif t == "screen_change":
+            self.tray.setToolTip(f"{self.session.agent_name} — " + tr("screen changed ×{n}", "màn hình đổi ×{n}", n=ev.get("changes", 0)))
+        elif t == "screen_viewed":
+            self.say("👁 " + tr("{n} looked at your screen ({k})", "{n} đã xem màn hình ({k})", n=self.session.agent_name, k=ev.get("kind", "")), ms=3500)
+        elif t == "highlight":
+            self.highlight.show_rect(tuple(ev["rect"]), str(ev.get("label", "")), int(ev.get("ms", 700)))
+        elif t == "control_aborted":
+            self.say("⛔ " + str(ev.get("reason", "")), ms=6000)
+            self.tray.showMessage(self.session.agent_name, "⛔ " + str(ev.get("reason", "")))
         self._refresh_state()
 
     def on_settings(self, ev: dict[str, Any]) -> None:
@@ -269,6 +300,8 @@ class UiApp:
         self.hotkeys.register("kill", hk.get("kill", ""), self.kill)
         self.hotkeys.register("talk", hk.get("talk", ""), self.toggle_talk)
         self.hotkeys.register("chat", hk.get("chat", ""), self.show_chat)
+        self.hotkeys.register("capture", hk.get("capture", ""), lambda: self.capture("screen"))
+        self.hotkeys.register("watch", hk.get("watch", ""), self.toggle_watch)
         if self.hotkeys.qt_filter is not None:
             self.qapp.installNativeEventFilter(self.hotkeys.qt_filter)
         for name, why in self.hotkeys.failed.items():
@@ -335,6 +368,44 @@ class UiApp:
         self.avatar.setVisible(not self.avatar.isVisible())
         self.bubble.hide()
 
+    # ---- screen ---------------------------------------------------------------------------------------------------------------------
+    def capture(self, kind: str, rect: tuple[int, int, int, int] | None = None) -> None:
+        """Capture (privacy-masked) and attach to the chat; you decide whether to send it."""
+        from personal_agent.perception import capture as cap
+
+        try:
+            att, masked, title = capture_attachment(kind, self.cfg.screen, rect)
+        except cap.Blocked as e:
+            return self.say("🔒 " + str(e), ms=5000)
+        except (cap.CaptureError, OSError, ValueError) as e:
+            return self.say(f"⚠ {e}", ms=5000)
+        self.show_chat()
+        self.chat.add_attachment(att)
+        note = tr(" ({n} private window hidden)", " (đã ẩn {n} cửa sổ riêng tư)", n=masked) if masked else ""
+        self.say("📎 " + tr("Captured: {t}", "Đã chụp: {t}", t=(title or tr("screen", "màn hình"))[:40]) + note, ms=3500)
+
+    def capture_window_soon(self) -> None:
+        self.say(tr("Click the window you want in 2 s…", "Bấm vào cửa sổ cần chụp trong 2 giây…"), ms=2000)
+        QTimer.singleShot(2200, lambda: self.capture("active_window"))
+
+    def capture_region(self) -> None:
+        self.region.start()
+
+    def toggle_watch(self) -> None:
+        on = self.screen_state == "off"
+        self.client.send({"type": "screen_mode", "action": "on" if on else "off"})
+
+    def on_screen_mode(self, ev: dict[str, Any]) -> None:
+        self.screen_state = str(ev.get("state", "off"))
+        self.watch_badge.set_state(self.screen_state, float(ev.get("minutes_left") or 0), bool(ev.get("private")))
+        self.avatar.set_watching(self.screen_state == "on")
+        for a in self._watch_actions:
+            a.setText(tr("Stop watching the screen", "Dừng theo dõi màn hình") if self.screen_state != "off" else tr("Watch the screen", "Theo dõi màn hình"))
+        if ev.get("reason") == "timeout":
+            self.say(tr("Screen watching switched itself off.", "Đã tự tắt theo dõi màn hình."), ms=5000)
+        elif self.screen_state == "on" and not ev.get("private"):
+            self.say(tr("Watching the screen (nothing is saved). Click the red badge to stop.", "Đang theo dõi màn hình (không lưu gì). Bấm huy hiệu đỏ để dừng."), ms=4500)
+
     # ---- voice ------------------------------------------------------------------------------------------------------------------------
     def toggle_talk(self) -> None:
         """Global hotkey: first press starts listening, second press (or silence) stops and sends what was said."""
@@ -377,6 +448,7 @@ class UiApp:
     # ---- lifecycle ---------------------------------------------------------------------------------------------------------------------------
     def quit(self) -> None:
         self.speaker.stop()
+        self.client.send({"type": "screen_mode", "action": "off"})  # never leave watching on behind a closed UI
         self.hotkeys.clear()
         self.client.stop()
         self.tray.hide()

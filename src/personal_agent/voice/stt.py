@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import io
 import wave
+from typing import Any
 
 from personal_agent.settings.secrets import get_secret
 from personal_agent.settings.settings import SttCfg
@@ -57,7 +58,8 @@ def _google(audio: bytes, mime: str, cfg: SttCfg) -> tuple[str, int, int]:
     from google.genai import types
 
     client = genai.Client(api_key=key)  # keep the reference alive for the whole request
-    r = client.models.generate_content(model=cfg.model, contents=[types.Part.from_bytes(data=audio, mime_type=mime), PROMPT])
+    parts: list[Any] = [types.Part.from_bytes(data=audio, mime_type=mime), PROMPT]
+    r = client.models.generate_content(model=cfg.model, contents=parts)
     u = r.usage_metadata
     return (r.text or "").strip(), int(getattr(u, "prompt_token_count", 0) or 0), int(getattr(u, "candidates_token_count", 0) or 0)
 

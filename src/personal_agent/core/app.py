@@ -42,6 +42,8 @@ from personal_agent.observability.logging import redact, redact_obj
 from personal_agent.observability.metrics import Metrics
 from personal_agent.observability.tracing import Tracing
 from personal_agent.observability.usage import Meter
+from personal_agent.perception import hooks, windows
+from personal_agent.perception.watch import ScreenWatcher
 from personal_agent.policy.approvals import ApprovalStore
 from personal_agent.policy.killswitch import KillSwitch
 from personal_agent.rag.loaders import UnsupportedDocument
@@ -94,6 +96,17 @@ def create_app(brain: Brain | None = None, db_path: Path | None = None, token: s
         s.clients = set()  # connected UIs: scheduled runs and pending approvals are pushed to them
         s.mcp_status = await mcp_client.load_tools() if mcp_client.read_config()["servers"] else {}
         s.watcher = start_watcher()
+        loop = asyncio.get_running_loop()
+        def emit_threadsafe(ev: dict[str, Any]) -> None:  # called from worker threads (tools, the watcher)
+            loop.call_soon_threadsafe(lambda: asyncio.create_task(broadcast(ev)))
+
+        s.screen = ScreenWatcher(lambda: settings.screen, emit_threadsafe)
+        s.kill.on_engage(lambda: s.screen.stop("kill switch"))  # the kill switch also ends continuous watching
+        hooks.emit = emit_threadsafe
+        hooks.observers = lambda: len(s.clients)
+        hooks.killed = lambda: bool(s.kill.engaged or procs.stopped())
+        hooks.agent_name = lambda: settings.agent.name
+        hooks.latest_frame = s.screen.latest
         async with AsyncSqliteSaver.from_conn_string(str(db_path or data_dir() / "checkpoints.db")) as saver:
             s.make_graph = lambda: build_graph(saver, brain, settings, s.meter, s.audit, s.approvals, s.kill)
             s.graph = s.make_graph()
@@ -109,6 +122,8 @@ def create_app(brain: Brain | None = None, db_path: Path | None = None, token: s
         if s.watcher:
             s.watcher.stop()
         s.tracing.flush()
+        s.screen.stop("shutdown")
+        hooks.reset()
         mcp_client.unload()
         sandbox().stop()
 
@@ -216,6 +231,8 @@ def create_app(brain: Brain | None = None, db_path: Path | None = None, token: s
             return
         finally:
             app.state.clients.discard(send)
+            if not app.state.clients:  # nobody left to see the 'watching' badge: never keep watching the screen unseen
+                app.state.screen.stop("no UI connected")
 
     MANAGE = {"memory_list", "memory_update", "memory_delete", "rag_list", "rag_pause", "rag_resume", "rag_sync",
               "mcp_list", "mcp_set", "mcp_reload", "schedules", "schedule_cancel"}
@@ -259,7 +276,7 @@ def create_app(brain: Brain | None = None, db_path: Path | None = None, token: s
             return {"type": "schedules", "items": services.scheduler().jobs()}
         return {"type": "schedule_cancel", "ok": services.scheduler().cancel(int(msg["id"]))}
 
-    ADMIN = {"settings_get", "settings_set", "secret_set", "test_role", "policy_get", "policy_set", "policy_add_path", "transcribe", "about"}
+    ADMIN = {"settings_get", "settings_set", "secret_set", "test_role", "policy_get", "policy_set", "policy_add_path", "transcribe", "about", "screen_mode"}
 
     def stt_text(audio: bytes, mime: str) -> str:
         """Transcribe audio (blocking; call from a thread). The daily cap is checked first, cloud usage is metered."""
@@ -273,7 +290,7 @@ def create_app(brain: Brain | None = None, db_path: Path | None = None, token: s
             app.state.meter.record(settings.voice.stt.model, tin, tout)
         return text
 
-    async def admin(kind: str, msg: dict[str, Any]) -> dict[str, Any]:
+    async def admin(kind: str, msg: dict[str, Any]) -> dict[str, Any] | None:
         """Settings / secrets / policy / voice calls behind the Settings, Policy and chat-microphone UI."""
         s = app.state
         if kind == "settings_get":
@@ -300,6 +317,20 @@ def create_app(brain: Brain | None = None, db_path: Path | None = None, token: s
         if kind == "transcribe":
             audio = base64.b64decode(str(msg.get("data", "")), validate=True)
             return {"type": "transcript", "text": await asyncio.to_thread(stt_text, audio, str(msg.get("mime", "audio/wav")))}
+        if kind == "screen_mode":
+            act = str(msg.get("action", "status"))
+            if act not in ("on", "off", "pause", "resume", "status"):
+                raise ValueError("action must be on, off, pause, resume or status")
+            if act == "on" and s.kill.engaged:
+                raise ValueError("the kill switch is engaged")
+            before = s.screen.state
+            {"on": s.screen.start, "off": s.screen.stop, "pause": s.screen.pause, "resume": s.screen.resume}.get(act, lambda: None)()
+            if s.screen.state != before:
+                return None  # the watcher already broadcast the change to every UI (this one included)
+            status: dict[str, Any] = s.screen.status()
+            return status
+        if isinstance(msg.get("ui_pid"), int):
+            windows.register_own_pid(msg["ui_pid"])  # the agent may never operate the UI's windows (it could approve itself)
         return {"type": "about", "pid": os.getpid()}
 
     async def handle(msg: Any, send: Send) -> None:
@@ -307,7 +338,8 @@ def create_app(brain: Brain | None = None, db_path: Path | None = None, token: s
         kind = msg.get("type", "user") if isinstance(msg, dict) else None
         if isinstance(kind, str) and kind in ADMIN:
             try:
-                return await send(await admin(kind, msg))
+                reply = await admin(kind, msg)
+                return await send(reply) if reply is not None else None
             except (ValueError, TypeError, KeyError, OSError) as e:
                 return await send({"type": "error", "code": "bad_request", "message": str(e)[:200]})
         if kind == "kill":

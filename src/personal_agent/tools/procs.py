@@ -40,6 +40,10 @@ def run(cmdline: list[str], cwd: Path, timeout: float, input_data: bytes | None 
             _procs.discard(p)
 
 
+def stopped() -> bool:
+    return _stopped
+
+
 def kill_all() -> None:
     global _stopped
     with _lock:

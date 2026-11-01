@@ -66,7 +66,7 @@ strict = true
 python_version = "3.12"
 
 [[tool.mypy.overrides]]
-module = ["psutil", "sqlite_vec", "fastembed", "faster_whisper", "edge_tts", "playwright.*", "recurring_ical_events", "icalendar", "icalendar.*"]
+module = ["pywinauto", "pywinauto.*", "psutil", "sqlite_vec", "fastembed", "faster_whisper", "edge_tts", "playwright.*", "recurring_ical_events", "icalendar", "icalendar.*"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]

@@ -10,11 +10,13 @@ import random
 
 from PySide6.QtCore import QEasingCurve, QPoint, QPropertyAnimation, QRect, Qt, QTimer, Signal
 from PySide6.QtGui import (
+    QColor,
     QContextMenuEvent,
     QDragEnterEvent,
     QDropEvent,
     QMouseEvent,
     QPainter,
+    QPen,
     QPixmap,
 )
 from PySide6.QtWidgets import QApplication, QLabel, QMenu, QVBoxLayout, QWidget
@@ -52,7 +54,8 @@ class AvatarWindow(QWidget):
         self._skin, self._scale, self._state = skin, scale, "idle"
         self._anim: Animation = skin.animation("idle")
         self._frame = 0
-        self._cache: dict[tuple[str, int, float], QPixmap] = {}
+        self._cache: dict[tuple[str, int, float, bool], QPixmap] = {}
+        self._watching = False
         self._press: QPoint | None = None
         self._drag_offset = QPoint()
         self._dragging = False
@@ -134,12 +137,27 @@ class AvatarWindow(QWidget):
         self._frame = (self._frame + 1) % len(self._anim.frames)
         self._apply_frame()
 
+    def set_watching(self, on: bool) -> None:
+        """Red dot in the corner while continuous screen watching is on (part of the pixmap, so it is also part of the click mask)."""
+        if on != self._watching:
+            self._watching, self._cache = on, {}
+            self._apply_frame()
+
     def _pixmap(self) -> QPixmap:
-        key = (self._state, self._frame, self._scale)
+        key = (self._state, self._frame, self._scale, self._watching)
         if key not in self._cache:
             src = self._anim.frames[min(self._frame, len(self._anim.frames) - 1)]
             w = max(16, int(self._skin.size * self._scale))
-            self._cache[key] = src.scaled(w, w, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
+            pm = src.scaled(w, w, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
+            if self._watching:
+                pm = pm.copy()
+                p = QPainter(pm)
+                p.setRenderHint(QPainter.RenderHint.Antialiasing)
+                p.setBrush(QColor("#f7768e"))
+                p.setPen(QPen(QColor("#1a1b26"), 2))
+                p.drawEllipse(QPoint(pm.width() - 13, 13), 7, 7)
+                p.end()
+            self._cache[key] = pm
         return self._cache[key]
 
     def _apply_frame(self) -> None:

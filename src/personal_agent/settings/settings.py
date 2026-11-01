@@ -148,10 +148,36 @@ class UiCfg(BaseModel):
     avatar_wander: bool = False
     sleep_after_s: int = 300
     hotkeys: dict[str, str] = Field(default_factory=lambda: {
-        "kill": "ctrl+alt+k", "talk": "ctrl+alt+space", "chat": "ctrl+alt+a"})
+        "kill": "ctrl+alt+k", "talk": "ctrl+alt+space", "chat": "ctrl+alt+a",
+        "capture": "ctrl+alt+s", "watch": "ctrl+alt+w"})
+
+
+DEFAULT_BLOCK_TITLES = [  # case-insensitive substrings of the window title
+    "keepass", "bitwarden", "1password", "lastpass", "dashlane", "nordpass", "enpass", "proton pass", "credential manager",
+    "sign in to your account", "đăng nhập", "internet banking", "ngân hàng", "mbbank", "vietcombank", "techcombank", "vietinbank",
+    "bidv", "agribank", "tpbank", "vpbank", "paypal", "wells fargo", "chase.com", "online banking", "wallet", "ví điện tử", "momo", "zalopay"]
+DEFAULT_BLOCK_PROCESSES = ["keepass.exe", "keepassxc.exe", "bitwarden.exe", "1password.exe", "lastpass.exe", "dashlane.exe", "nordpass.exe",
+                           "enpass.exe", "protonpass.exe", "credwiz.exe", "consent.exe", "lockapp.exe", "logonui.exe"]
+
+
+class ScreenCfg(BaseModel):
+    """Screen perception and control (docs/phase8.md). Privacy first: blocked windows are never captured, read or controlled."""
+
+    agent_view: bool = True  # the agent may look at the screen (screen_describe / screen_ocr / ui_tree); each view is shown to you
+    control: bool = True  # the agent may ask to click/type (every use still needs your approval)
+    block_titles: list[str] = Field(default_factory=lambda: list(DEFAULT_BLOCK_TITLES))
+    block_processes: list[str] = Field(default_factory=lambda: list(DEFAULT_BLOCK_PROCESSES))
+    max_image_px: int = Field(default=1280, ge=256, le=4000)  # longest side of anything sent to a vision model
+    watch_interval_s: float = Field(default=2.0, ge=0.5, le=60)  # continuous mode: seconds between low-FPS captures
+    watch_change_threshold: int = Field(default=8, ge=1, le=64)  # perceptual-hash distance (0-64) that counts as a meaningful change
+    watch_max_minutes: int = Field(default=30, ge=1, le=480)  # continuous mode switches itself off after this long
+    max_actions: int = Field(default=8, ge=1, le=20)  # one approval covers at most this many control steps
+    highlight_ms: int = Field(default=700, ge=0, le=5000)  # the target is outlined this long before every action
+    abort_move_px: int = Field(default=25, ge=5, le=500)  # moving the mouse this far during a sequence aborts it
 
 
 class Settings(BaseModel):
+    screen: ScreenCfg = Field(default_factory=ScreenCfg)
     voice: VoiceCfg = Field(default_factory=VoiceCfg)
     ui: UiCfg = Field(default_factory=UiCfg)
     observability: ObservabilityCfg = Field(default_factory=ObservabilityCfg)
