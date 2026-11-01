@@ -17,10 +17,11 @@ x-fallbacks: &fb          # Google-primary roles: Haiku first, then OpenAI
 x-fb-haiku: &fbh          # Haiku-primary planner/critic: Google, then OpenAI (no Sonnet by design)
   - {provider: google, model: gemini-3.5-flash-lite}
   - {provider: openai, model: gpt-4o}
-x-fb-local: &fbl          # local Ollama classifier: daemon down or unusable output -> Haiku
-  - {provider: anthropic, model: claude-haiku-5-5}
 models:
-  classifier: {provider: ollama,    model: "gemma4:e4b",          max_tokens: 600,  timeout_s: 30, fallbacks: *fbl}
+  # Measured 2026-11-01 on this machine: ollama gemma4:e4b needed 13-65 s per classification and returned JSON missing required
+  # fields, so every turn waited out the timeout before the fallback. To retry it: {provider: ollama, model: "gemma4:e4b",
+  # timeout_s: 30, fallbacks: [{provider: anthropic, model: claude-haiku-5-5}]} and re-measure with `agent-eval`.
+  classifier: {provider: anthropic, model: claude-haiku-5-5,      max_tokens: 600,  fallbacks: *fbh}
   fast:       {provider: google,    model: gemini-3.5-flash-lite, max_tokens: 2000, fallbacks: *fb}
   summarizer: {provider: google,    model: gemini-3.5-flash-lite, max_tokens: 1000, fallbacks: *fb}
   planner:    {provider: anthropic, model: claude-haiku-5-5,      max_tokens: 2000, fallbacks: *fbh}
@@ -85,7 +86,9 @@ context:
   keep_last: 6
   offload_chars: 6000     # larger tool outputs are stored as artifacts, context keeps a digest
 observability:
-  langfuse_enabled: false
+  langfuse_enabled: true  # inert until LANGFUSE_PUBLIC_KEY / LANGFUSE_SECRET_KEY (/ LANGFUSE_BASE_URL) are set; payloads are redacted
+  metrics_enabled: true   # local SQLite latency / error-rate / tool-success events behind /usage
+  metrics_keep_days: 90
 sandbox:
   idle_timeout_s: 300
   network: false

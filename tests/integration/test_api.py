@@ -1,4 +1,3 @@
-import os
 from pathlib import Path
 from typing import Any
 
@@ -102,6 +101,10 @@ def test_usage_and_rename_commands(tmp_path: Path) -> None:
         ws.send_json({"type": "usage"})
         u = drain(ws)[-1]
         assert u["today"]["tokens"] > 0 and u["caps"]["tokens"] == 1_000_000
+        today = u["report"]["days"][0]  # the turn above went through the metrics callback
+        assert today["tokens"] > 0 and today["llm_calls"] >= 1 and today["llm_error_rate"] == 0.0 and u["langfuse"] is False
+        ws.send_json({"type": "usage", "days": "x"})  # junk input falls back to the default window
+        assert drain(ws)[-1]["report"]["days"]
         ws.send_json({"type": "set_agent_name", "name": "Mimi"})
         assert drain(ws)[-1] == {"type": "agent_name", "name": "Mimi"}
         ws.send_json({"type": "set_agent_name", "name": "bad\nname"})
@@ -110,11 +113,6 @@ def test_usage_and_rename_commands(tmp_path: Path) -> None:
 
 def test_missing_api_key_is_reported_not_crashed(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("personal_agent.llm.factory.get_secret", lambda name: None)
-    # the default classifier is local Ollama (keyless); pin it to a keyed provider so this test never hits a real daemon
-    home = Path(os.environ["PERSONAL_AGENT_HOME"])
-    home.mkdir(parents=True, exist_ok=True)
-    (home / "config.yaml").write_text(
-        "models:\n  classifier: {provider: anthropic, model: claude-haiku-5-5, fallbacks: []}\n", encoding="utf-8")
     app = create_app(db_path=tmp_path / "c.db", token="test-token")  # real LiveBrain
     with TestClient(app) as c, c.websocket_connect("/ws", headers=AUTH) as ws:
         hello(ws)

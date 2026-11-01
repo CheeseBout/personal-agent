@@ -15,10 +15,11 @@ def test_ollama_chat_needs_no_key_and_points_at_local_daemon(monkeypatch: pytest
     assert str(m.openai_api_base).startswith("http://localhost:11434/v1")  # type: ignore[attr-defined]
 
 
-def test_default_config_routes_classifier_locally_with_haiku_fallback() -> None:
-    c = load_settings().models["classifier"]
-    assert (c.provider, c.model) == ("ollama", "gemma4:e4b")
-    assert c.fallbacks[0].model == "claude-haiku-5-5"
+def test_default_config_never_routes_to_sonnet_and_embeds_locally() -> None:
+    s = load_settings()
+    refs = [r for m in s.models.values() for r in (m, *m.fallbacks)]
+    assert not any("sonnet" in r.model for r in refs)
+    assert (s.rag.embedding.provider, s.rag.embedding.model) == ("ollama", "bge-m3")
 
 
 def test_ollama_embedder_normalises_and_checks_dim(monkeypatch: pytest.MonkeyPatch) -> None:

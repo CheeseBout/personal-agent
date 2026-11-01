@@ -114,7 +114,14 @@ class WorkersCfg(BaseModel):
     roles: dict[str, WorkerRole] = Field(default_factory=dict)
 
 
+class ObservabilityCfg(BaseModel):
+    langfuse_enabled: bool = False  # still needs LANGFUSE_PUBLIC_KEY / LANGFUSE_SECRET_KEY; without them it stays off
+    metrics_enabled: bool = True  # local SQLite latency / error / tool-success events (the "Usage" page)
+    metrics_keep_days: int = 90
+
+
 class Settings(BaseModel):
+    observability: ObservabilityCfg = Field(default_factory=ObservabilityCfg)
     agent: AgentCfg = Field(default_factory=AgentCfg)
     workers: WorkersCfg = Field(default_factory=WorkersCfg)
     rag: RagCfg = Field(default_factory=RagCfg)

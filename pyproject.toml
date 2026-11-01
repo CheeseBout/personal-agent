@@ -46,6 +46,7 @@ dev = ["ruff==0.17.3", "mypy==2.4.1", "pytest==9.2.0", "pytest-asyncio==1.4.1", 
 [project.scripts]
 agent-core = "personal_agent.core.main:main"
 agent-chat = "personal_agent.cli:main"
+agent-eval = "personal_agent.evals:main"
 
 [build-system]
 requires = ["hatchling"]

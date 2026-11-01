@@ -43,7 +43,12 @@ def show(ev: dict[str, Any]) -> None:
         print(f"agent> {ev['text']}")
         print(f"  (steps={u.get('steps')}, tools={u.get('tool_calls')}, tokens={u.get('tokens')}, ~${(u.get('cost') or 0):.4f})")
     elif t == "usage":
-        print(f"  today: {ev['today']}  caps: {ev['caps']}")
+        print(f"  today: {ev['today']}  caps: {ev['caps']}  langfuse: {'on' if ev.get('langfuse') else 'off'}")
+        for d in (ev.get("report") or {}).get("days", []):
+            err, ok = d["llm_error_rate"], d["tool_success_rate"]
+            print(f"  {d['day']}  tokens={d['tokens']:>8}  ${d['cost_usd']:.4f}  llm={d['llm_calls']} "
+                  f"err={'-' if err is None else f'{err:.0%}'} {d['llm_avg_ms'] or '-'}ms  "
+                  f"tools={d['tool_calls']} ok={'-' if ok is None else f'{ok:.0%}'}")
     elif t == "agent_name":
         print(f"  agent renamed to {ev['name']}")
     elif t in ("audit", "rules", "approvals"):

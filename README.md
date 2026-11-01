@@ -22,6 +22,12 @@ python -m uv run mypy src
 
 The per-install API token is created on first start and stored in Credential Manager; logs go to `%APPDATA%\personal-agent\logs\`.
 
+## Phase 6: observability and evals
+Local metrics (latency, error rate, tool success per day) are always on: `/usage` in `agent-chat`. Optional Langfuse tracing: set
+`LANGFUSE_PUBLIC_KEY` / `LANGFUSE_SECRET_KEY` / `LANGFUSE_BASE_URL` in `.env` and run `python -m uv sync --extra observability`.
+Eval harness (real models, about $0.01): `python -m uv run agent-eval [--lang vi] [--compare tests/evals/baseline.json]`.
+Details and measured findings: `docs/phase6.md`.
+
 ## Phase 5: sub-agents
 For plans with two or more independent lookups the supervisor hands them to small parallel workers (cheap Haiku by default), each with
 its own context and only the tools of its role (`workers:` in `config/default.yaml`). Workers never ask you for approval: if something

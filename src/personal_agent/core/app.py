@@ -26,6 +26,8 @@ from personal_agent.llm.errors import classify_provider_error
 from personal_agent.llm.factory import MissingSecretError
 from personal_agent.observability.audit import AuditLog
 from personal_agent.observability.logging import redact, redact_obj
+from personal_agent.observability.metrics import Metrics
+from personal_agent.observability.tracing import Tracing
 from personal_agent.observability.usage import Meter
 from personal_agent.policy.approvals import ApprovalStore
 from personal_agent.policy.killswitch import KillSwitch
@@ -61,6 +63,8 @@ def create_app(brain: Brain | None = None, db_path: Path | None = None, token: s
 
         s = app.state
         s.meter = Meter(data_dir() / "usage.db", settings.pricing)
+        s.metrics = Metrics(data_dir() / "usage.db", settings.observability.metrics_keep_days)
+        s.tracing = Tracing(settings, s.metrics)
         s.audit = AuditLog(data_dir() / "audit.db")
         s.approvals = ApprovalStore(data_dir() / "approvals.db")
         s.kill = KillSwitch()
@@ -89,6 +93,7 @@ def create_app(brain: Brain | None = None, db_path: Path | None = None, token: s
             await asyncio.gather(*s.tasks, return_exceptions=True)
         if s.watcher:
             s.watcher.stop()
+        s.tracing.flush()
         mcp_client.unload()
         sandbox().stop()
 
@@ -248,7 +253,9 @@ def create_app(brain: Brain | None = None, db_path: Path | None = None, token: s
             s.kill.release()
             await send({"type": "kill_released"})
         elif kind == "usage":
-            await send({"type": "usage", "today": s.meter.today(),
+            days = msg.get("days", 7)
+            await send({"type": "usage", "today": s.meter.today(), "report": s.metrics.report(days if isinstance(days, int) else 7),
+                        "langfuse": s.tracing.langfuse_on,
                         "caps": {"tokens": settings.budgets.daily_max_tokens, "cost_usd": settings.budgets.daily_max_cost_usd}})
         elif kind == "audit":
             await send({"type": "audit", "items": s.audit.tail(int(msg.get("limit", 50)))})
@@ -317,7 +324,7 @@ def create_app(brain: Brain | None = None, db_path: Path | None = None, token: s
                                    "message": "this thread is waiting for your approval decision first", "items": pending})
             graph_input = {"messages": [HumanMessage(text)]}
         # Budgets stop runs in code; this is only a backstop against a routing bug.
-        config = {"configurable": {"thread_id": tid}, "recursion_limit": settings.budgets.max_steps * 8 + 40}
+        config = app.state.tracing.run_config(tid, settings.budgets.max_steps * 8 + 40)
         final, paused = "", False
         try:
             async for chunk in app.state.graph.astream(graph_input, config, stream_mode="updates"):
