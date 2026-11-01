@@ -127,7 +127,7 @@ class PlanPanel(QWidget):
             return
         bar.setRange(0, 1000)
         bar.setValue(min(1000, int(1000 * used / cap)))
-        bar.setFormat(f"{used:,.4g} / {cap:,.4g} {unit}")
+        bar.setFormat(f"${used:,.4f} / ${cap:,.2f}" if unit == "$" else f"{used:,.0f} / {cap:,.0f} {unit}")
 
 
 class ChatWindow(QMainWindow):

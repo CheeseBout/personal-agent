@@ -40,12 +40,10 @@ Real calls checked by hand: edge-tts Vietnamese and English synthesis, then Gemi
 Screenshots of the avatar states, chat, approval center and usage page were rendered offscreen and inspected.
 
 ## Not verified / known limits
-- **Not seen on a real desktop:** transparency, click-through, always-on-top, snapping on several monitors, the tray icon and balloon
-  notifications, and global hotkeys firing from other applications were only exercised offscreen or by unit tests. Please try them once.
-- **No microphone was available:** the recorder is tested with a fake audio device; real capture and the silence detector threshold (`SPEECH_RMS`) may need tuning.
-- **Idle footprint misses the target.** Measured (idle, offscreen, Python 3.12): daemon about 99 MB, UI about 99 MB, about 200 MB together vs the
-  150 MB goal. The UI is 36 MB of Qt plus 17 MB of pydantic/settings before any window exists; the daemon pays for LangGraph/LangChain. Profiling and
-  trimming (lazy windows, lazier imports) belong to Phase 9.
+- **Checked on a real Windows 11 desktop (1 screen, 125% scaling) on 2026-11-01** with `scripts/desktop_check.py` (21 checks, all passing): tray icon visible; avatar on screen, transparent corners show the desktop (no box), clicks pass through transparent pixels and hit the body (`WindowFromPoint`), topmost tool window without a taskbar button; a real question through the real daemon and models (avatar thinking -> success, answer shown in chat); approval opens the center and shows the sticky bubble; the three global hotkeys work when pressed from outside the app (chat, talk start/stop, kill switch and release); the microphone captured audio.
+- **Still not verified:** several monitors with different DPI, tray balloon notifications (only that the call succeeds), and speech recognition quality from a real spoken sentence through the microphone (the test recording was discarded, not uploaded; the silence threshold `SPEECH_RMS` may need tuning).
+- **Idle footprint misses the target.** Measured on 2026-11-01 at idle: daemon about 99 MB; UI about 99 MB offscreen but **170 MB on the real Windows platform**, so roughly 270 MB together vs the 150 MB goal. The UI is 36 MB of Qt plus 17 MB of pydantic/settings before any window exists; the daemon pays for LangGraph/LangChain. Profiling and trimming (lazy windows, lazier imports) belong to Phase 9.
+- First answer after starting the daemon took 10-16 s on the desktop (later ones are a few seconds); the likely cause is the Ollama `bge-m3` model loading for the memory lookup. Not investigated further.
 - Lip-sync is the "speaking" animation, not audio-driven. The avatar menu has no "screen mode" entry yet (Phase 8).
 - The Policy page is a raw YAML editor with validation, not a form. Policy edits are powerful by design: they change what the agent may do.
 - Attachments larger than 5 MB are refused; images are sent inline (they stay in the conversation checkpoint).

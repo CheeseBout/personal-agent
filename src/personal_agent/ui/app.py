@@ -183,6 +183,7 @@ class UiApp:
             self.on_transcript(str(ev.get("text", "")))
         elif t == "final":
             self.say(str(ev.get("text", "")).strip().splitlines()[0][:120] if ev.get("text") else "", ms=5000)
+            self.client.send({"type": "usage"})  # keep the budget meters current after every answer
             if self.cfg.voice.tts.enabled and ev.get("text"):
                 self.speaker.speak(str(ev["text"]), self.cfg.voice.tts)
         elif t == "error" and ev.get("code") not in ("approval_pending",):

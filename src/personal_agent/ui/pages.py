@@ -141,7 +141,7 @@ class UsagePage(QWidget):
                                      (self.cost, today.get("cost_usd", 0.0), caps.get("cost_usd"), "$")):
             bar.setRange(0, 1000)
             bar.setValue(min(1000, int(1000 * used / cap)) if cap else 0)
-            bar.setFormat(f"{used:,.4g} / {cap:,.4g} {unit}" if cap else "-")
+            bar.setFormat("-" if not cap else f"${used:,.4f} / ${cap:,.2f}" if unit == "$" else f"{used:,.0f} / {cap:,.0f} {unit}")
         def pct(v: float | None) -> str:
             return "-" if v is None else f"{v:.0%}"
 

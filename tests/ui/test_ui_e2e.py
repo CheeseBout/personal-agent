@@ -73,9 +73,8 @@ def test_connects_loads_settings_and_chats_through_the_real_daemon(ui: UiApp) ->
     assert "pong" in ui.session.transcript[-1].text and not ui.session.busy
     assert "pong" in ui.chat.browser.toPlainText()
     assert ui.state.current() == "success"
-    ui.session.usage = {}  # drop the empty report fetched at connect time
-    ui.client.send({"type": "usage"})
-    assert wait_for(lambda: bool(ui.session.usage))
+    # the UI refreshes the budget meters by itself after an answer (no manual request here)
+    assert wait_for(lambda: (ui.session.usage.get("today") or {}).get("tokens", 0) > 0)
     assert ui.session.usage["report"]["days"][0]["llm_calls"] >= 1  # the daemon's metrics reached the UI
 
 
