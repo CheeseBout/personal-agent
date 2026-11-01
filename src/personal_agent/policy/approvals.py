@@ -9,7 +9,7 @@ from contextlib import closing
 from pathlib import Path
 from typing import Any
 
-from personal_agent.observability.logging import redact_obj
+from personal_agent.observability.logging import redact, redact_obj
 from personal_agent.storage import ensure_db_ok
 
 
@@ -53,7 +53,7 @@ class ApprovalStore:
                     "INSERT INTO approvals (thread_id,call_id,tool,args,tier,risk,preview,tainted,reason,status,created,expires_at)"
                     " VALUES (?,?,?,?,?,?,?,?,?,'pending',?,?)",
                     (thread_id, call_id, tool, args_json,
-                     tier, risk, preview[:20_000], int(tainted), reason, now, now + timeout_s))
+                     tier, risk, redact(preview)[:20_000], int(tainted), redact(reason), now, now + timeout_s))
                 row = db.execute("SELECT * FROM approvals WHERE thread_id=? AND call_id=? AND status='pending'",
                                  (thread_id, call_id)).fetchone()
         return dict(row)

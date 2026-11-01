@@ -128,6 +128,16 @@ def invoke(el: Element) -> bool:
         return False
 
 
+def focused_is_password() -> bool | None:
+    """Does the control that has keyboard focus hold a password? None = cannot tell (no UI Automation info)."""
+    try:
+        from pywinauto.uia_defines import IUIA
+
+        return bool(IUIA().iuia.GetFocusedElement().CurrentIsPassword)
+    except Exception:  # noqa: BLE001 - any failure means "unknown", which the caller treats as unsafe for typing
+        return None
+
+
 def set_focus(hwnd: int) -> None:
     try:
         _root(hwnd).set_focus()

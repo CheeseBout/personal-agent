@@ -33,25 +33,37 @@ def _from_env(name: str) -> str | None:
     return os.environ.get(name) or _env_file_values().get(name) or None
 
 
+_SECRETISH = ("_KEY", "_TOKEN", "_PASSWORD", "_SECRET")
+
+
+def _remember(name: str, value: str | None) -> str | None:
+    if value and name.upper().endswith(_SECRETISH):
+        from personal_agent.observability.logging import register_secret
+
+        register_secret(value)  # from now on redact() masks this exact value, whatever it looks like
+    return value
+
+
 def get_secret(name: str) -> str | None:
     if v := _from_env(name):
-        return v
+        return _remember(name, v)
     try:
-        return keyring.get_password(SERVICE, name) or None
+        return _remember(name, keyring.get_password(SERVICE, name) or None)
     except keyring.errors.KeyringError:
         return None
 
 
 def set_secret(name: str, value: str) -> None:
+    _remember(name, value)
     keyring.set_password(SERVICE, name, value)
 
 
 def get_api_token() -> str:
     """Per-install token protecting the local API; created on first use."""
     if tok := _from_env("PERSONAL_AGENT_TOKEN"):
-        return tok
+        return _remember("PERSONAL_AGENT_TOKEN", tok) or tok
     tok = get_secret("API_TOKEN")
     if not tok:
         tok = _secrets.token_urlsafe(32)
         set_secret("API_TOKEN", tok)
-    return tok
+    return _remember("API_TOKEN", tok) or tok

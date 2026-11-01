@@ -228,7 +228,11 @@ def create_app(brain: Brain | None = None, db_path: Path | None = None, token: s
         app.state.clients.add(send)
         try:
             while True:
-                msg = await ws.receive_json()
+                try:
+                    msg = await ws.receive_json()
+                except (ValueError, KeyError):  # invalid JSON (JSONDecodeError is a ValueError) or a binary frame (no "text")
+                    await send({"type": "error", "code": "bad_request", "message": "message is not valid JSON"})
+                    continue
                 await handle(msg, send)
         except (WebSocketDisconnect, WebSocketDisconnected):  # the 2nd one: a send failed first, then we tried to read
             return
@@ -425,6 +429,8 @@ def create_app(brain: Brain | None = None, db_path: Path | None = None, token: s
             except (ValueError, OSError, UnsupportedDocument) as e:
                 return await send({"type": "error", "code": "bad_request", "message": str(e)[:200]})
             graph_input = {"messages": [HumanMessage(content)]}
+            if files:  # attached documents / images / transcripts are untrusted text: side effects after them need approval
+                graph_input["tainted"] = True
         # Budgets stop runs in code; this is only a backstop against a routing bug.
         config = app.state.tracing.run_config(tid, settings.budgets.max_steps * 8 + 40)
         final, paused = "", False

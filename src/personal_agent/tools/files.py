@@ -26,6 +26,24 @@ def resolve(path: str) -> Path:
     return p if p.is_absolute() else workspace() / p
 
 
+def _opened_path(f: Any) -> str | None:
+    """Final path of an already-open file (Windows GetFinalPathNameByHandle), or None if it cannot be determined."""
+    if os.name != "nt":
+        return None
+    try:
+        import ctypes
+        import msvcrt
+
+        buf = ctypes.create_unicode_buffer(1024)
+        n = ctypes.windll.kernel32.GetFinalPathNameByHandleW(msvcrt.get_osfhandle(f.fileno()), buf, 1024, 0)
+        if not 0 < n < 1024:
+            return None
+        value = buf.value
+        return value if value.startswith("\\\\?\\UNC\\") else value.removeprefix("\\\\?\\")  # a UNC path keeps its prefix (and is then denied)
+    except (OSError, ValueError, AttributeError):
+        return None
+
+
 @tool
 def file_read(path: str, max_chars: int = 20_000) -> str:
     """Read a UTF-8 text file. Relative paths are resolved inside the workspace folder.
@@ -39,6 +57,8 @@ def file_read(path: str, max_chars: int = 20_000) -> str:
         if not p.is_file():
             return "ERROR: file not found"
         with p.open("rb") as f:
+            if (opened := _opened_path(f)) is not None and not policy().check_path(opened).allowed:
+                return "ERROR: access denied: the file changed to a location outside the allowed folders"
             data = f.read(max_chars * 4 + 1)  # bound memory on huge files
     except OSError as e:
         return f"ERROR: cannot read file: {e.strerror or type(e).__name__}"

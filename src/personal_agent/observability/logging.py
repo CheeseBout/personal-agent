@@ -22,8 +22,28 @@ _SECRET_VALUE = re.compile(
 )
 
 
+_known: set[str] = set()
+_known_re: re.Pattern[str] | None = None
+MIN_SECRET_LEN = 8  # shorter values would mask ordinary words
+
+
+def register_secret(value: str | None) -> None:
+    """Remember a secret value so redact() masks it even when it has no recognisable format (e.g. a random API token)."""
+    global _known_re
+    if value and len(value) >= MIN_SECRET_LEN and value not in _known:
+        _known.add(value)
+        _known_re = re.compile("|".join(re.escape(v) for v in sorted(_known, key=len, reverse=True)))
+
+
+def forget_secrets() -> None:  # tests
+    global _known_re
+    _known.clear()
+    _known_re = None
+
+
 def redact(text: str) -> str:
-    return _SECRET_VALUE.sub("***", text)
+    text = _SECRET_VALUE.sub("***", text)
+    return _known_re.sub("***", text) if _known_re is not None else text
 
 
 def redact_obj(v: Any) -> Any:

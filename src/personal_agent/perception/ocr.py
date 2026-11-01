@@ -76,6 +76,8 @@ def recognize(img: Image.Image, origin: tuple[int, int] = (0, 0), timeout: float
                                      Path(d), timeout)
         except subprocess.TimeoutExpired as e:
             raise OcrError("OCR timed out") from e
+        except OSError as e:
+            raise OcrError(f"cannot start PowerShell: {type(e).__name__}") from e
     if rc != 0:
         raise OcrError(err.decode("utf-8", errors="replace")[:200] or "OCR failed")
     data = parse(out.decode("utf-8", errors="replace"))

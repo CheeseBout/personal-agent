@@ -120,6 +120,7 @@ class Backend(Protocol):
     def press(self, vks: list[int]) -> None: ...
     def scroll(self, x: int, y: int, amount: int) -> None: ...
     def cursor(self) -> tuple[int, int]: ...
+    def focused_password(self) -> bool | None: ...
 
 
 class Win32Backend:
@@ -144,6 +145,9 @@ class Win32Backend:
 
     def invoke(self, el: uia.Element) -> bool:
         return uia.invoke(el)
+
+    def focused_password(self) -> bool | None:
+        return uia.focused_is_password()
 
     def focus(self, hwnd: int) -> None:
         """Bring a window to the front. Windows refuses plain SetForegroundWindow from a background process, so borrow the current
@@ -279,6 +283,15 @@ class Runner:
                 return
         raise Refused(f"could not bring '{win.title[:40]}' to the front, so nothing was typed (Windows may be blocking focus changes)")
 
+    def _focus_is_safe_for_text(self, el: uia.Element | None, printable: bool = True) -> None:
+        """Characters go to whatever control has focus, not to the element we named. Refuse if that is a password field, and (when no
+        field was named) if we cannot tell what it is."""
+        fp = self.be.focused_password()
+        if fp is True:
+            raise Refused("typing into a password field is not allowed")
+        if fp is None and el is None and printable:
+            raise Refused("cannot tell which field has focus: name the field (name=...) so it can be checked")
+
     def _window_by_title(self, title: str) -> windows.WindowInfo:
         w = windows.find_window(title, self.be.list_windows())
         if w is None:
@@ -335,6 +348,7 @@ class Runner:
             fg = self.be.foreground()
             if fg is None or fg.hwnd != win.hwnd:
                 raise Refused(f"the front window changed to '{fg.title[:40] if fg else '?'}' before typing; nothing was typed")
+            self._focus_is_safe_for_text(el)
             self.be.type_text(a.text or "")
             result = f"typed {len(a.text or '')} characters into {label}"
         elif a.op == "key":
@@ -343,7 +357,10 @@ class Runner:
                 self._reachable(point, win)
                 self.be.click(point[0], point[1], "left", False)
                 self.expected = point
-            self.be.press(parse_keys(a.keys or ""))
+            vks = parse_keys(a.keys or "")
+            single_char = len(vks) == 1 and (0x30 <= vks[0] <= 0x5A or vks[0] == 0x20)  # a bare letter / digit / space types text
+            self._focus_is_safe_for_text(el, printable=single_char)
+            self.be.press(vks)
             result = f"pressed {a.keys} in '{win.title[:40]}'"
         else:  # scroll
             self._reachable(point, win)

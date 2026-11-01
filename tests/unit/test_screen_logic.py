@@ -105,6 +105,7 @@ class FakeBackend:
         self.invokable = True
         self.at: WindowInfo | None = None
         self.on_pause: Any = None
+        self.focus_pw: bool | None = False  # what UI Automation says about the control that has keyboard focus
 
     def list_windows(self) -> list[WindowInfo]:
         return self.wins
@@ -145,6 +146,9 @@ class FakeBackend:
 
     def cursor(self) -> tuple[int, int]:
         return self.cur
+
+    def focused_password(self) -> bool | None:
+        return self.focus_pw
 
 
 def runner(be: FakeBackend, cfg: ScreenCfg = CFG, observers: int = 1) -> Runner:
@@ -274,6 +278,35 @@ def test_uia_find_prefers_an_exact_name_and_operable_controls(monkeypatch: pytes
     assert uia.find(1, name="report")[0].path == "0.1"                    # a substring-only match still works
     with pytest.raises(uia.UiaError, match="out of range"):
         uia.find(1, name="save", index=9)
+
+
+def test_typing_without_a_named_field_checks_what_actually_has_focus() -> None:
+    """Review finding: `type` with only a window typed into the focused control without ever asking whether it is a password field."""
+    be = FakeBackend()
+    be.focus_pw = True
+    log = runner(be).run([Action(op="type", window="Notes", text="hunter2")])
+    assert "password" in log[0] and not any(x.startswith("type") for x in be.log)
+    be.focus_pw = None  # UI Automation cannot say
+    log = runner(be).run([Action(op="type", window="Notes", text="hello")])
+    assert "cannot tell which field has focus" in log[0] and not any(x.startswith("type") for x in be.log)
+    be.focus_pw = False
+    assert runner(be).run([Action(op="type", window="Notes", text="hello")])[0].startswith("1. typed")
+    # a named field that turns out to be focused on a password control is refused too (the click landed somewhere else)
+    be.focus_pw = True
+    assert "password" in runner(be).run([Action(op="type", window="Notes", name="Body", text="x")])[0]
+    # named field + unknown focus info: allowed (the element itself was checked)
+    be.focus_pw, be.log = None, []
+    assert runner(be).run([Action(op="type", window="Notes", name="Body", text="x")])[0].startswith("1. typed")
+
+
+def test_single_character_keys_are_treated_like_typing_but_shortcuts_are_not() -> None:
+    be = FakeBackend()
+    be.focus_pw = None
+    assert "cannot tell" in runner(be).run([Action(op="key", window="Notes", keys="a")])[0]       # would type a letter
+    assert runner(be).run([Action(op="key", window="Notes", keys="enter")])[0].startswith("1. pressed")
+    assert runner(be).run([Action(op="key", window="Notes", keys="ctrl+s")])[0].startswith("1. pressed")
+    be.focus_pw = True
+    assert "password" in runner(be).run([Action(op="key", window="Notes", keys="enter")])[0]       # even Enter: never act inside a password field
 
 
 def test_a_mouse_click_is_refused_when_another_window_covers_the_target() -> None:

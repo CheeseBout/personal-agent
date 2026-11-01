@@ -18,8 +18,9 @@ def system_exe(name: str) -> str:
     root = os.environ.get("SystemRoot", r"C:\Windows")
     known = {"powershell": os.path.join(root, "System32", "WindowsPowerShell", "v1.0", "powershell.exe"),
              "taskkill": os.path.join(root, "System32", "taskkill.exe")}
-    path = known.get(name)
-    return path if path and os.path.isfile(path) else name
+    if name not in known:
+        raise ValueError(f"unknown system tool '{name}'")
+    return known[name]  # even if missing: starting it fails with FileNotFoundError instead of searching PATH / the current folder
 
 
 class KillSwitchEngaged(RuntimeError):
@@ -28,7 +29,10 @@ class KillSwitchEngaged(RuntimeError):
 
 def _kill_tree(p: subprocess.Popen[bytes]) -> None:
     # /T also ends children (e.g. what PowerShell spawned). Only ever targets a PID this module started.
-    subprocess.run([system_exe("taskkill"), "/T", "/F", "/PID", str(p.pid)], capture_output=True, check=False)
+    try:
+        subprocess.run([system_exe("taskkill"), "/T", "/F", "/PID", str(p.pid)], capture_output=True, check=False)
+    except OSError:
+        pass  # no taskkill: fall through to killing the process itself
     p.kill()
 
 

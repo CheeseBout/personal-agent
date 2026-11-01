@@ -82,7 +82,13 @@ class PolicyEngine:
     @property
     def cfg(self) -> dict[str, Any]:
         path = self._fixed or policy_file()  # your %APPDATA% copy takes over as soon as it exists
-        m = path.stat().st_mtime
+        try:
+            m = path.stat().st_mtime
+        except OSError as e:  # deleted / unreadable after start-up
+            if not self._cfg:
+                raise
+            log.warning("policy_file_missing_keeping_previous", error=type(e).__name__)
+            return self._cfg
         if m != self._mtime or path != self._loaded:
             try:
                 new = yaml.safe_load(path.read_text(encoding="utf-8")) or {}

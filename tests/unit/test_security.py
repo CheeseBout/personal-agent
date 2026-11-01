@@ -245,7 +245,14 @@ def test_internal_helpers_use_absolute_system_paths_not_a_lookup() -> None:
     for name in ("powershell", "taskkill"):
         exe = procs.system_exe(name)
         assert os.path.isabs(exe) and os.path.isfile(exe) and exe.lower().startswith(os.environ["SystemRoot"].lower())
-    assert procs.system_exe("not-a-known-tool") == "not-a-known-tool"
+    with pytest.raises(ValueError, match="unknown system tool"):
+        procs.system_exe("not-a-known-tool")  # never a bare name: that would search PATH / the current folder
+
+
+def test_system_exe_stays_absolute_even_if_the_tool_is_missing(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("SystemRoot", str(tmp_path))  # a broken system: nothing in System32
+    exe = procs.system_exe("powershell")
+    assert os.path.isabs(exe) and not os.path.isfile(exe)  # starting it fails loudly instead of finding a look-alike
 
 
 def test_a_corrupt_policy_edit_keeps_the_last_good_rules_and_never_fails_open(tmp_path: Path) -> None:
@@ -262,3 +269,68 @@ def test_a_corrupt_policy_edit_keeps_the_last_good_rules_and_never_fails_open(tm
     p.write_text("{{{ not yaml", encoding="utf-8")
     with pytest.raises(Exception):  # noqa: B017 - no good policy was ever loaded: fail closed
         PolicyEngine(p).cfg  # noqa: B018
+
+
+# ---- found by the independent review ----------------------------------------------------------------------------------------------------
+def test_secret_values_are_masked_even_without_a_recognisable_format() -> None:
+    from personal_agent.observability.logging import forget_secrets, register_secret
+
+    token = "Zq8_r5Lw0mTn3xKcV7yEaBfH2uJdG4pS"  # looks like nothing in particular
+    assert token in redact(f"leaked {token} here")  # unknown format: the pattern rules cannot see it
+    register_secret(token)
+    try:
+        assert token not in redact(f"leaked {token} here") and token not in str(redact_obj({"note": [f"x {token}"]}))
+        register_secret("short")  # too short: would mask ordinary words
+        assert redact("a short word") == "a short word"
+    finally:
+        forget_secrets()
+
+
+def test_every_secret_the_process_reads_is_registered_for_masking(monkeypatch: pytest.MonkeyPatch) -> None:
+    from personal_agent.observability.logging import forget_secrets
+    from personal_agent.settings import secrets as S
+
+    forget_secrets()
+    monkeypatch.setenv("PERSONAL_AGENT_ENV_FILE", "nul")
+    monkeypatch.setenv("GOOGLE_API_KEY", "plain-random-value-without-prefix-9f3a")
+    monkeypatch.setenv("PERSONAL_AGENT_TOKEN", "another-random-token-value-7c1d")
+    monkeypatch.setenv("SOME_PLAIN_SETTING", "not-a-secret-value-123456")
+    try:
+        assert S.get_secret("GOOGLE_API_KEY") and S.get_api_token()
+        S.get_secret("SOME_PLAIN_SETTING")  # not named like a secret: left alone
+        text = "key=plain-random-value-without-prefix-9f3a token=another-random-token-value-7c1d setting=not-a-secret-value-123456"
+        out = redact(text)
+        assert "plain-random-value" not in out and "another-random-token" not in out and "not-a-secret-value-123456" in out
+    finally:
+        forget_secrets()
+
+
+def test_approval_previews_and_reasons_are_redacted_before_they_are_stored(tmp_path: Path) -> None:
+    from personal_agent.policy.approvals import ApprovalStore
+
+    s = ApprovalStore(tmp_path / "p.db")
+    s.ensure("t", "c", "file_write", {"path": "a.txt"}, "T2", "medium", "new content: key sk-abcdefghijklmnop and AIzaSyA1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q",
+             False, "because Bearer abc.def.ghi said so", 60)
+    shown = str(s.pending())
+    assert "sk-abcdefghijklmnop" not in shown and "AIzaSyA1b2" not in shown and "abc.def.ghi" not in shown
+
+
+def test_a_vanished_policy_file_keeps_the_last_good_rules(tmp_path: Path) -> None:
+    p = tmp_path / "policy.yaml"
+    p.write_text(Path("config/policy.yaml").read_text(encoding="utf-8"), encoding="utf-8")
+    eng = PolicyEngine(p)
+    assert eng.check_command("whoami").allowed
+    p.unlink()
+    assert eng.check_command("whoami").allowed and not eng.check_path(r"C:\Windows\win.ini").allowed  # still the last good rules
+    with pytest.raises(OSError):  # never had one: fail closed
+        PolicyEngine(tmp_path / "nope.yaml").cfg  # noqa: B018
+
+
+def test_file_read_denies_when_the_opened_file_is_somewhere_else(ws: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    ok = files.file_read.invoke({"path": str(ws / "ok.txt")})
+    assert ok == "fine"
+    assert files._opened_path(open(ws / "ok.txt", "rb")).lower() == str(ws / "ok.txt").lower()  # noqa: SIM115
+    # a link swapped in after the check: the handle now points outside -> denied even though the check passed
+    monkeypatch.setattr(files, "_opened_path", lambda f: str(ws.parent / "outside" / "secret.txt"))
+    out = files.file_read.invoke({"path": str(ws / "ok.txt")})
+    assert "TOP-SECRET" not in out and "denied" in out.lower()
