@@ -50,6 +50,7 @@ from personal_agent.rag.loaders import UnsupportedDocument
 from personal_agent.rag.watch import FolderWatcher
 from personal_agent.settings.secrets import get_api_token
 from personal_agent.settings.settings import data_dir, load_settings, set_agent_name
+from personal_agent.storage import ensure_db_ok
 from personal_agent.tools import procs
 from personal_agent.tools.registry import policy
 from personal_agent.voice import stt
@@ -107,7 +108,9 @@ def create_app(brain: Brain | None = None, db_path: Path | None = None, token: s
         hooks.killed = lambda: bool(s.kill.engaged or procs.stopped())
         hooks.agent_name = lambda: settings.agent.name
         hooks.latest_frame = s.screen.latest
-        async with AsyncSqliteSaver.from_conn_string(str(db_path or data_dir() / "checkpoints.db")) as saver:
+        ckpt = db_path or data_dir() / "checkpoints.db"
+        ensure_db_ok(ckpt)
+        async with AsyncSqliteSaver.from_conn_string(str(ckpt)) as saver:
             s.make_graph = lambda: build_graph(saver, brain, settings, s.meter, s.audit, s.approvals, s.kill)
             s.graph = s.make_graph()
             sched = services.scheduler()

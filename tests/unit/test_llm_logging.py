@@ -50,6 +50,7 @@ async def test_chain_falls_through_to_fallback_when_primary_is_out_of_credit(mon
         return RunnableLambda(lambda _: AIMessage(f"from {ref.provider}"))
 
     monkeypatch.setattr(factory, "build_chat_model", fake_build)
+    monkeypatch.setattr(factory, "get_secret", lambda n: "k")  # keys exist; the google fallback then fails when it is first built
     s = Settings(models={"worker": ModelSpec(provider="anthropic", model="a", fallbacks=[
         ModelRef(provider="google", model="g"), ModelRef(provider="openai", model="o")])})
     assert (await get_chat_model("worker", settings=s).ainvoke("hi")).content == "from openai"

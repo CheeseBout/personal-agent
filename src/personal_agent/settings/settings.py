@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import re
+import sys
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
@@ -31,7 +32,7 @@ class AgentCfg(BaseModel):
 
 class ServerCfg(BaseModel):
     host: str = "127.0.0.1"
-    port: int = 8765
+    port: int = Field(default=8765, ge=1, le=65535)
 
 
 class Budgets(BaseModel):
@@ -204,10 +205,26 @@ def data_dir() -> Path:
     return p
 
 
+def app_root() -> Path:
+    """The folder that holds `config/` and `docker/`: the repo root in development, the unpacked bundle in a PyInstaller build."""
+    if getattr(sys, "frozen", False):
+        return Path(getattr(sys, "_MEIPASS", Path(sys.executable).parent))
+    return Path(__file__).parents[3]
+
+
 def config_dir() -> Path:
-    # shortcut: repo-relative config dir, switch to packaged resources when building the installer
     env = os.environ.get("PERSONAL_AGENT_CONFIG_DIR")
-    return Path(env) if env else Path(__file__).parents[3] / "config"
+    return Path(env) if env else app_root() / "config"
+
+
+def user_policy_path() -> Path:
+    return data_dir() / "policy.yaml"
+
+
+def policy_file() -> Path:
+    r"""The policy in force: your edited copy in %APPDATA%\personal-agent when it exists, else the shipped one (read-only when installed)."""
+    mine = user_policy_path()
+    return mine if mine.is_file() else config_dir() / "policy.yaml"
 
 
 def _merge(a: dict[str, Any], b: dict[str, Any]) -> dict[str, Any]:
@@ -223,8 +240,20 @@ def _yaml(p: Path) -> dict[str, Any]:
 
 @lru_cache(maxsize=1)
 def load_settings() -> Settings:
-    raw = _merge(_yaml(config_dir() / "default.yaml"), _yaml(data_dir() / "config.yaml"))
-    return Settings.model_validate(raw)
+    """Shipped defaults + the user's override file. A broken override (bad YAML, wrong types, a half-written save) is moved aside as
+    config.yaml.invalid-<time> and the defaults are used, so a typo can never stop the daemon from starting."""
+    base = _yaml(config_dir() / "default.yaml")  # the shipped file: if THIS is broken the install is broken, so let it raise
+    user_path = data_dir() / "config.yaml"
+    try:
+        user = _yaml(user_path)
+        if not isinstance(user, dict):
+            raise TypeError("config.yaml must be a mapping")
+        return Settings.model_validate(_merge(base, user))
+    except (yaml.YAMLError, TypeError, ValueError, AttributeError, OSError):  # ValueError covers pydantic's ValidationError
+        from personal_agent.storage import quarantine
+
+        quarantine(user_path, "invalid")
+        return Settings.model_validate(base)
 
 
 def save_overrides(patch: dict[str, Any]) -> None:

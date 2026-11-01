@@ -3,14 +3,25 @@
 Self-hosted, single-user agentic AI for Windows (LangGraph ReAct, Vietnamese + English, cloud-first LLMs, desktop companion).
 Full specification: `PROMPT.md`. Plan and decisions: `docs/phase0.md`, `docs/adr/`.
 
-## Dev quick start
+## Quick start
 ```powershell
 python -m pip install --user uv
-python -m uv sync --group dev
-python -m uv run pytest
+.\scripts\run.ps1            # installs everything, starts the daemon and the desktop UI (first run opens a setup wizard)
+.\scripts\run.ps1 -Chat      # or the terminal chat instead of the UI
+```
+Documentation map: `docs/architecture.md` (diagram), `docs/howto.md` (add a tool / MCP server / provider / skin), `docs/security.md` (threat model and review),
+`docs/packaging.md` (Windows bundle and installer), `docs/phase1.md` ... `docs/phase9.md` (what each phase built, how it was verified, known gaps), `docs/adr/` (decisions).
+
+## Dev quick start
+```powershell
+python -m uv sync --group dev --extra mcp --extra ui --extra voice --extra screen --extra observability   # everything the tests need
+python -m uv run pytest                     # unit, integration, UI (offscreen) and failure-injection tests
 python -m uv run ruff check .
 python -m uv run mypy src
+python -m uv run python scripts/profile_resources.py   # idle memory / CPU / start-up time
 ```
+Real-desktop and real-model checks (they use your keys and move your mouse; read the header of each script first): `scripts/desktop_check.py`, `scripts/screen_check.py`,
+`scripts/agent_screen_e2e.py`, `python -m uv run agent-eval`.
 
 ## Run (Phase 1)
 1. Provide at least one provider key. Easiest: `copy .env.example .env` and fill in `ANTHROPIC_API_KEY=...`

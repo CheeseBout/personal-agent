@@ -10,11 +10,13 @@ from pathlib import Path
 from typing import Any
 
 from personal_agent.settings.settings import Budgets, Price
+from personal_agent.storage import ensure_db_ok
 
 
 class Meter:
     def __init__(self, path: Path, pricing: dict[str, Price]) -> None:
         self._path = path
+        ensure_db_ok(path)  # a damaged file is moved aside instead of crashing the daemon
         self._pricing = pricing
         self._res_lock = threading.Lock()
         self._held: tuple[int, float] = (0, 0.0)  # tokens / USD reserved by in-flight parallel calls

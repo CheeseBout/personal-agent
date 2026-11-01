@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import subprocess
 import threading
 from pathlib import Path
@@ -11,13 +12,23 @@ _procs: set[subprocess.Popen[bytes]] = set()
 _stopped = False
 
 
+def system_exe(name: str) -> str:
+    """Absolute path of a Windows system tool. A bare name would be looked up in the current directory and PATH first, where a
+    planted look-alike could be found; System32 cannot be written by the agent."""
+    root = os.environ.get("SystemRoot", r"C:\Windows")
+    known = {"powershell": os.path.join(root, "System32", "WindowsPowerShell", "v1.0", "powershell.exe"),
+             "taskkill": os.path.join(root, "System32", "taskkill.exe")}
+    path = known.get(name)
+    return path if path and os.path.isfile(path) else name
+
+
 class KillSwitchEngaged(RuntimeError):
     """A new process was requested while the kill switch is engaged."""
 
 
 def _kill_tree(p: subprocess.Popen[bytes]) -> None:
     # /T also ends children (e.g. what PowerShell spawned). Only ever targets a PID this module started.
-    subprocess.run(["taskkill", "/T", "/F", "/PID", str(p.pid)], capture_output=True, check=False)
+    subprocess.run([system_exe("taskkill"), "/T", "/F", "/PID", str(p.pid)], capture_output=True, check=False)
     p.kill()
 
 

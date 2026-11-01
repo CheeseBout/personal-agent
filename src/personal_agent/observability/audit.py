@@ -10,11 +10,13 @@ from pathlib import Path
 from typing import Any
 
 from personal_agent.observability.logging import redact, redact_obj
+from personal_agent.storage import ensure_db_ok
 
 
 class AuditLog:
     def __init__(self, path: Path) -> None:
         self._path = path
+        ensure_db_ok(path)  # a damaged file is moved aside instead of crashing the daemon
         with closing(self._db()) as db, db:
             db.executescript(
                 """

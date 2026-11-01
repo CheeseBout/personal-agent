@@ -101,7 +101,9 @@ def test_policy_editor_validates_before_saving_and_keeps_a_backup(tmp_path: Path
         assert r.ask({"type": "policy_get"})["text"] == text  # nothing was written
         ok = r.ask({"type": "policy_set", "text": text.replace("timeout_s: 600", "timeout_s: 300")})
         assert ok["saved"] and "timeout_s: 300" in ok["text"]
-        assert "timeout_s: 600" in (Path(__import__("os").environ["PERSONAL_AGENT_CONFIG_DIR"]) / "policy.yaml.bak").read_text()
+        assert "timeout_s: 600" in (data_dir() / "policy.yaml.bak").read_text(encoding="utf-8")  # what was in force before
+        assert "timeout_s: 300" in (data_dir() / "policy.yaml").read_text(encoding="utf-8")  # your copy lives in %APPDATA%
+        assert "timeout_s: 600" in (Path(__import__("os").environ["PERSONAL_AGENT_CONFIG_DIR"]) / "policy.yaml").read_text(encoding="utf-8")  # the shipped file is untouched
 
 
 def test_image_and_text_attachments_reach_the_model_as_one_message(tmp_path: Path) -> None:

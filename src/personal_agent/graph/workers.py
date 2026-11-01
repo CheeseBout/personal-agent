@@ -146,7 +146,9 @@ async def run_worker(env: WorkerEnv, p: dict[str, Any], tid: str) -> dict[str, A
                 env.audit.log(wid, cid, name, args, "T3", "denied_policy", reason)
                 outs.append(ToolMessage(f"DENIED: {reason}", tool_call_id=cid, name=name, status="error"))
                 continue
-            assert meta is not None
+            if meta is None:  # unreachable (the gate denies unknown tools); kept as a guard that survives `python -O`
+                outs.append(ToolMessage("DENIED: unknown tool", tool_call_id=cid, name=name, status="error"))
+                continue
             try:
                 raw = await env.tools[name].ainvoke(args)
                 text = env.shape(raw if isinstance(raw, str) else str(raw))

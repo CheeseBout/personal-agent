@@ -11,3 +11,7 @@ dist/
 build/
 *.db
 *.log
+
+# packaging output
+/dist/
+/build/

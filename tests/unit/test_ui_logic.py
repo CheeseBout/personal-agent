@@ -241,7 +241,8 @@ def test_policy_add_path_also_handles_the_one_line_form_and_keeps_comments(tmp_p
     folder = tmp_path / "it's"
     folder.mkdir()
     policy_add_path(str(folder))
-    text = pol.read_text(encoding="utf-8")
+    assert pol.read_text(encoding="utf-8").startswith("# keep me") and "it" not in pol.read_text(encoding="utf-8").split("paths:")[1]  # shipped file untouched
+    text = policy_text()  # the edited copy in the data dir is now the policy in force
     assert text.startswith("# keep me")
     allowed = yaml.safe_load(text)["paths"]["allow"]
     assert allowed[0] == "C:\\a" and str(folder) in allowed  # the quote in the folder name survived

@@ -5,11 +5,11 @@ Provider SDKs are imported lazily so an idle daemon only pays for what it uses.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from typing import Any
 
 from langchain_core.language_models import BaseChatModel
-from langchain_core.runnables import Runnable
+from langchain_core.runnables import Runnable, RunnableConfig, RunnableLambda
 from pydantic import BaseModel
 
 from personal_agent.settings.secrets import get_secret
@@ -63,6 +63,29 @@ def build_chat_model(ref: ModelRef, spec: ModelSpec | None = None, retries: int 
     return ChatGoogleGenerativeAI(**kw)
 
 
+def _usable(ref: ModelRef) -> bool:
+    """Can this provider be called at all (its key exists, or it needs none)?"""
+    return ref.provider == "ollama" or bool(get_secret(KEY_NAMES.get(ref.provider, "")))
+
+
+def _lazy(build: Callable[[], Runnable[Any, Any]]) -> Runnable[Any, Any]:
+    """A runnable that constructs the real model on first use."""
+    cell: list[Runnable[Any, Any]] = []
+
+    def get() -> Runnable[Any, Any]:
+        if not cell:
+            cell.append(build())
+        return cell[0]
+
+    def run(x: Any, config: RunnableConfig) -> Any:
+        return get().invoke(x, config)
+
+    async def arun(x: Any, config: RunnableConfig) -> Any:
+        return await get().ainvoke(x, config)
+
+    return RunnableLambda(run, afunc=arun)
+
+
 def get_chat_model(
     role: str,
     tools: Sequence[Any] = (),
@@ -86,10 +109,11 @@ def get_chat_model(
         return m.bind_tools(list(tools)) if tools else m
 
     primary = make(spec)
-    fallbacks: list[Runnable[Any, Any]] = []
-    for ref in spec.fallbacks:
-        try:
-            fallbacks.append(make(ref, retries=1))  # fail fast: a hung fallback is worse than an error
-        except MissingSecretError:
-            continue
+    # Fallbacks are only BUILT when the primary actually fails: importing a provider SDK costs 40-90 MB of RAM and up to a second.
+    # (A fallback whose API key is missing is still skipped up front.)
+
+    def fallback(ref: ModelRef) -> Runnable[Any, Any]:
+        return _lazy(lambda: make(ref, retries=1))  # fail fast: a hung fallback is worse than an error
+
+    fallbacks = [fallback(ref) for ref in spec.fallbacks if _usable(ref)]
     return primary.with_fallbacks(fallbacks) if fallbacks else primary

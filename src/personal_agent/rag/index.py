@@ -18,6 +18,7 @@ from personal_agent.rag import hybrid
 from personal_agent.rag.chunk import chunk
 from personal_agent.rag.embed import Embedder, EmbeddingUnavailable
 from personal_agent.rag.loaders import load
+from personal_agent.storage import ensure_db_ok
 
 log = structlog.get_logger()
 MAX_CHUNKS = 5000
@@ -47,6 +48,7 @@ def _sha(p: Path) -> str:
 
 class RagIndex:
     def __init__(self, path: Path, embedder: Embedder, chunk_chars: int = 900, overlap: int = 120) -> None:
+        ensure_db_ok(path)
         self.path, self.emb, self.size, self.overlap = path, embedder, chunk_chars, overlap
         self._lock = threading.Lock()  # one writer at a time (watcher thread + tools)
         with closing(self._db()) as db, db:

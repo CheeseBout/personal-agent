@@ -22,8 +22,9 @@ from personal_agent.settings.secrets import get_secret, set_secret
 from personal_agent.settings.settings import (
     Settings,
     _merge,
-    config_dir,
+    policy_file,
     save_overrides,
+    user_policy_path,
 )
 
 PROVIDERS = {*KEY_NAMES, "ollama"}
@@ -130,12 +131,8 @@ async def test_role(s: Settings, role: str) -> dict[str, Any]:
 
 
 # ---- policy editor -------------------------------------------------------------------------------------------------
-def policy_path() -> Path:
-    return config_dir() / "policy.yaml"
-
-
 def policy_text() -> str:
-    return policy_path().read_text(encoding="utf-8")
+    return policy_file().read_text(encoding="utf-8")
 
 
 def policy_add_path(path: str) -> None:
@@ -178,15 +175,16 @@ def policy_save(text: str) -> None:
         raise ValueError("default_tier must be T0..T3")
     if not isinstance(cfg["paths"].get("allow"), list) or not isinstance(cfg["paths"].get("deny", []), list):
         raise ValueError("paths.allow and paths.deny must be lists")
-    tmp = policy_path().with_suffix(".yaml.new")
+    target = user_policy_path()  # edits always go to your copy in %APPDATA%: the shipped file may sit in a read-only install folder
+    tmp = target.with_suffix(".yaml.new")
     tmp.write_text(text, encoding="utf-8")
     try:
         eng = PolicyEngine(tmp)  # load and exercise the file with the real engine (paths, regexes, domains)
         eng.check_path(os.getcwd())
         eng.check_command("whoami")
         eng.check_domain("https://example.com")
-        shutil.copyfile(policy_path(), policy_path().with_suffix(".yaml.bak"))
-        os.replace(tmp, policy_path())
+        shutil.copyfile(policy_file(), target.with_suffix(".yaml.bak"))  # what was in force until now
+        os.replace(tmp, target)
     except Exception as e:
         tmp.unlink(missing_ok=True)
         raise ValueError(f"policy rejected by the engine: {type(e).__name__}") from e

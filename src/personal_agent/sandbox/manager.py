@@ -13,6 +13,8 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+from personal_agent.settings.settings import app_root
+
 NAME = "pa-sandbox"
 Runner = Callable[..., "subprocess.CompletedProcess[bytes]"]
 
@@ -67,8 +69,8 @@ class DockerSandbox:
         image = str(self._cfg().get("image", "personal-agent-sandbox:1"))
         if self._docker("image", "inspect", image).returncode == 0:
             return
-        # shortcut: repo-relative like config_dir()'s default; ship the Dockerfile as package data when building the installer
-        ctx = Path(__file__).parents[3] / "docker" / "sandbox"
+        # the Dockerfile ships next to config/ (repo root, or the PyInstaller bundle)
+        ctx = app_root() / "docker" / "sandbox"
         r = self._docker("build", "-t", image, str(ctx), timeout=900)  # first use only; needs network
         if r.returncode != 0:
             raise SandboxUnavailable("could not build the sandbox image: " + r.stderr.decode(errors="replace")[-300:])

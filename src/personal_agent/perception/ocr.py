@@ -72,7 +72,7 @@ def recognize(img: Image.Image, origin: tuple[int, int] = (0, 0), timeout: float
         script = Path(d) / "ocr.ps1"
         script.write_text(_SCRIPT, encoding="utf-8")
         try:
-            rc, out, err = procs.run(["powershell", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", str(script), str(png)],
+            rc, out, err = procs.run([procs.system_exe("powershell"), "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", str(script), str(png)],
                                      Path(d), timeout)
         except subprocess.TimeoutExpired as e:
             raise OcrError("OCR timed out") from e

@@ -17,6 +17,7 @@ from typing import Any
 import structlog
 
 from personal_agent.settings.settings import SchedulerCfg
+from personal_agent.storage import ensure_db_ok
 
 log = structlog.get_logger()
 RunJob = Callable[[dict[str, Any]], Awaitable[str]]
@@ -24,6 +25,7 @@ RunJob = Callable[[dict[str, Any]], Awaitable[str]]
 
 class Scheduler:
     def __init__(self, path: Path, cfg: SchedulerCfg) -> None:
+        ensure_db_ok(path)
         self.path, self.cfg = path, cfg
         self.run_job: RunJob | None = None
         self._wake = asyncio.Event()

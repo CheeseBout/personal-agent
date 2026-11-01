@@ -10,7 +10,7 @@ from PySide6.QtCore import QObject, QTimer, QUrl, Signal
 from PySide6.QtNetwork import QAbstractSocket, QNetworkRequest
 from PySide6.QtWebSockets import QWebSocket
 
-BACKOFF_S = (1, 2, 4, 8)  # then stays at the last value
+BACKOFF_S = (0.3, 0.6, 1, 2, 4)  # seconds; short first steps because the UI often starts the daemon and it is ready ~4 s later
 
 
 class DaemonClient(QObject):
@@ -64,7 +64,7 @@ class DaemonClient(QObject):
     def _on_disconnected(self) -> None:
         self.disconnected.emit()
         if self._wanted:
-            self._retry.start(BACKOFF_S[min(self._attempt, len(BACKOFF_S) - 1)] * 1000)
+            self._retry.start(int(BACKOFF_S[min(self._attempt, len(BACKOFF_S) - 1)] * 1000))
             self._attempt += 1
 
     def _on_text(self, text: str) -> None:

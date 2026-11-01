@@ -14,6 +14,8 @@ from personal_agent.rag.loaders import load
 
 MAX_FILES = 4
 MAX_BYTES = 5_000_000
+MAX_TOTAL_BYTES = 15_000_000  # all attachments of one message together (base64 makes it ~20 MB on the wire; WS_MAX_BYTES covers that)
+WS_MAX_BYTES = 32 * 1024 * 1024  # uvicorn's default of 16 MB closed the socket on 3+ large files
 MAX_TEXT_CHARS = 60_000
 IMAGES = {"image/png", "image/jpeg", "image/webp", "image/gif"}
 TEXT_EXT = {".txt", ".md", ".csv", ".json", ".yaml", ".yml", ".py", ".log", ".ini", ".toml", ".xml", ".html"}
@@ -43,11 +45,14 @@ def build_content(text: str, attachments: Any, transcribe: Callable[[bytes, str]
         raise ValueError(f"at most {MAX_FILES} attachments")
     notes: list[str] = []
     images: list[dict[str, Any]] = []
-    budget = MAX_TEXT_CHARS
+    budget, total = MAX_TEXT_CHARS, 0
     for a in attachments:
         if not isinstance(a, dict):
             raise ValueError("bad attachment")
         name, mime, data = _name(a.get("name")), str(a.get("mime", "")).lower(), _decode(a)
+        total += len(data)
+        if total > MAX_TOTAL_BYTES:
+            raise ValueError(f"attachments are larger than {MAX_TOTAL_BYTES // 1_000_000} MB together")
         ext = Path(name).suffix.lower()
         if mime in IMAGES:
             images.append({"type": "image_url", "image_url": {"url": f"data:{mime};base64,{base64.b64encode(data).decode()}"}})

@@ -18,7 +18,7 @@ MAX_WRITE = 200_000
 
 
 def _ps(script: str, data: bytes | None = None) -> tuple[int, bytes, bytes]:
-    return procs.run(["powershell", "-NoProfile", "-NonInteractive", "-Command", UTF8 + script], workspace(), 15, data)
+    return procs.run([procs.system_exe("powershell"), "-NoProfile", "-NonInteractive", "-Command", UTF8 + script], workspace(), 15, data)
 
 
 @tool

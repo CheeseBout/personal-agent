@@ -16,12 +16,17 @@ from pathlib import Path
 from typing import Any, Literal
 from urllib.parse import urlparse
 
+import structlog
 import yaml
 
-from personal_agent.settings.settings import config_dir
+from personal_agent.settings.settings import policy_file
 
 # Also blocks $ ~ % so env/home expansion cannot smuggle a path past the scope check.
 _SHELL_META = re.compile(r"[;&|<>`\n\r$~%]")
+
+
+log = structlog.get_logger()
+REQUIRED_KEYS = ("default_tier", "paths", "commands", "approval")
 
 
 @dataclass(frozen=True)
@@ -68,17 +73,30 @@ def _inside(path: str, root: str) -> bool:
 
 class PolicyEngine:
     def __init__(self, path: Path | None = None) -> None:
-        self._path = path or config_dir() / "policy.yaml"
+        self._fixed = path  # tests / explicit path; otherwise the effective policy file is looked up on every reload check
+        self._loaded: Path | None = None
         self._mtime = 0.0
         self._cfg: dict[str, Any] = {}
         self._calls: dict[str, deque[float]] = defaultdict(deque)
 
     @property
     def cfg(self) -> dict[str, Any]:
-        m = self._path.stat().st_mtime
-        if m != self._mtime:
-            self._cfg = yaml.safe_load(self._path.read_text(encoding="utf-8")) or {}
-            self._mtime = m
+        path = self._fixed or policy_file()  # your %APPDATA% copy takes over as soon as it exists
+        m = path.stat().st_mtime
+        if m != self._mtime or path != self._loaded:
+            try:
+                new = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+                if not isinstance(new, dict) or any(k not in new for k in REQUIRED_KEYS):
+                    # an empty / truncated file (a half-finished save) is not "no rules": it is a broken policy
+                    raise TypeError("policy must be a YAML mapping with " + ", ".join(REQUIRED_KEYS))
+            except (yaml.YAMLError, TypeError, OSError) as e:
+                if not self._cfg:  # never had a good policy: fail closed (callers get an error, nothing is allowed)
+                    raise
+                # A half-saved or broken edit must not switch the rules off or break every turn: keep the last good rules.
+                log.warning("policy_reload_failed_keeping_previous", error=type(e).__name__)
+                self._mtime, self._loaded = m, path
+                return self._cfg
+            self._cfg, self._mtime, self._loaded = new, m, path
         return self._cfg
 
     # ---- tool-level decision -------------------------------------------------------------------

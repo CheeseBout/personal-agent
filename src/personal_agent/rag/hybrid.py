@@ -16,8 +16,6 @@ import unicodedata
 from collections.abc import Callable
 from pathlib import Path
 
-import sqlite_vec
-
 W_DENSE, W_LEX = 0.7, 0.3
 _STOP = {
     "the", "and", "for", "are", "was", "were", "with", "from", "that", "this", "have", "has", "had", "you", "your", "not",
@@ -34,6 +32,8 @@ def connect(path: Path, dim: int) -> sqlite3.Connection:
     db = sqlite3.connect(path, timeout=10, check_same_thread=False)
     db.row_factory = sqlite3.Row
     db.enable_load_extension(True)
+    import sqlite_vec  # lazy: the vector extension is only needed once a document index is opened
+
     sqlite_vec.load(db)
     db.enable_load_extension(False)
     db.execute(f"CREATE VIRTUAL TABLE IF NOT EXISTS vec USING vec0(embedding float[{dim}])")
@@ -42,6 +42,8 @@ def connect(path: Path, dim: int) -> sqlite3.Connection:
 
 
 def blob(v: list[float]) -> bytes:
+    import sqlite_vec
+
     return bytes(sqlite_vec.serialize_float32(v))
 
 

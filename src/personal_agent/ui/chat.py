@@ -139,6 +139,7 @@ class ChatWindow(QMainWindow):
         super().__init__()
         self.session = session
         self._files: list[dict[str, Any]] = []
+        self._note = ""  # a message about the last attachment (too big, too many) that must stay visible
         self._recording = False
         self.browser = QTextBrowser()
         self.browser.setOpenExternalLinks(True)
@@ -200,19 +201,28 @@ class ChatWindow(QMainWindow):
             self.plan.show_session(self.session)
         if ch & {"busy", "approvals"}:
             n = len(self.session.approvals)
-            self.status.setText(tr("Waiting for your approval ({n})", "Đang chờ bạn duyệt ({n})", n=n) if n
-                                else tr("Working…", "Đang xử lý…") if self.session.busy else "")
+            self.status.setText(self._note or (tr("Waiting for your approval ({n})", "Đang chờ bạn duyệt ({n})", n=n) if n
+                                               else tr("Working…", "Đang xử lý…") if self.session.busy else ""))
             self.send_btn.setEnabled(not n)
         self.chips.setText("  ".join(f"📎 {f['name']}" for f in self._files))
 
     # ---- user input -------------------------------------------------------------------------------------------------
+    def _room_for(self, a: dict[str, Any]) -> bool:
+        used = sum(len(f["data"]) * 3 // 4 for f in self._files)
+        if len(self._files) >= 4 or used + len(a["data"]) * 3 // 4 > attach.MAX_TOTAL:
+            self._note = tr("At most 4 files and 15 MB per message.", "Tối đa 4 tệp và 15 MB mỗi tin nhắn.")
+            return False
+        return True
+
     def add_files(self, paths: list[str]) -> None:
         for p in paths:
             try:
-                self._files.append(attach.from_path(p))
+                a = attach.from_path(p)
             except (ValueError, OSError) as e:
-                self.status.setText(str(e))
-        self._files = self._files[:4]
+                self._note = str(e)
+                continue
+            if self._room_for(a):
+                self._files.append(a)
         self.refresh({"busy"})
 
     def _pick_files(self) -> None:
@@ -221,9 +231,12 @@ class ChatWindow(QMainWindow):
 
     def _paste_image(self, img: QImage) -> None:
         try:
-            self._files.append(attach.from_image(img, f"pasted-{len(self._files) + 1}.png"))
+            a = attach.from_image(img, f"pasted-{len(self._files) + 1}.png")
         except ValueError as e:
-            self.status.setText(str(e))
+            self._note = str(e)
+        else:
+            if self._room_for(a):
+                self._files.append(a)
         self.refresh({"busy"})
 
     def _mic(self, on: bool) -> None:
@@ -240,7 +253,7 @@ class ChatWindow(QMainWindow):
         text = self.composer.toPlainText().strip()
         if (not text and not self._files) or self.session.approvals:
             return
-        files, self._files = self._files, []
+        files, self._files, self._note = self._files, [], ""
         self.composer.clear()
         self.submitted.emit(text, files)
         self.refresh({"busy"})

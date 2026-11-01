@@ -20,6 +20,7 @@ import structlog
 from personal_agent.memory.sensitive import is_sensitive
 from personal_agent.rag import hybrid
 from personal_agent.rag.embed import Embedder, EmbeddingUnavailable
+from personal_agent.storage import ensure_db_ok
 
 log = structlog.get_logger()
 KINDS = ("semantic", "episodic", "procedural")
@@ -36,6 +37,7 @@ def _jaccard(a: str, b: str) -> float:
 
 class MemoryStore:
     def __init__(self, path: Path, embedder: Embedder | None = None, half_life_days: float = 90.0) -> None:
+        ensure_db_ok(path)
         self.path, self.emb, self.half_life = path, embedder, half_life_days
         self._lock = threading.Lock()
         with closing(self._db()) as db, db:

@@ -10,10 +10,12 @@ import os
 import uuid
 from datetime import date, datetime
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from icalendar import Calendar, Event
 from langchain_core.tools import tool
+
+if TYPE_CHECKING:
+    from icalendar import Calendar
 
 from personal_agent.policy.engine import ToolMeta
 from personal_agent.sandbox.backup import new_apply_id, write_with_backup
@@ -65,6 +67,8 @@ def calendar_list(start: str, end: str, file: str = DEFAULT_FILE) -> str:
         return f"ERROR: the calendar file is larger than {MAX_ICS_BYTES // 1_000_000} MB"
     try:
         s, e = _as_dt(_dt(start)), _as_dt(_dt(end))
+        from icalendar import Calendar  # lazy: ~15 MB and 160 ms the idle daemon should not pay
+
         cal = Calendar.from_ical(f.read_bytes())
         evs = _events(cal, s, e)
     except (ValueError, OSError) as ex:
@@ -90,12 +94,16 @@ def calendar_add(summary: str, start: str, end: str, location: str = "", descrip
         s, e = _dt(start), _dt(end)
         if _as_dt(e) <= _as_dt(s):
             return "ERROR: the end must be after the start"
+        from icalendar import Calendar
+
         cal = Calendar.from_ical(f.read_bytes()) if f.is_file() else Calendar()
     except (ValueError, OSError) as ex:
         return f"ERROR: {type(ex).__name__}: {str(ex)[:100]}"
     if not cal.get("PRODID"):
         cal.add("PRODID", "-//personal-agent//EN")
         cal.add("VERSION", "2.0")
+    from icalendar import Event
+
     ev = Event()
     ev.add("UID", f"{uuid.uuid4()}@personal-agent")
     ev.add("DTSTAMP", datetime.now().astimezone())

@@ -209,6 +209,21 @@ def test_chat_attachments_from_files_and_pasted_images(qapp: QApplication, tmp_p
     assert w.chips.text() == ""
 
 
+def test_chat_refuses_more_than_four_files_or_fifteen_megabytes(qapp: QApplication, tmp_path: Path) -> None:
+    w = ChatWindow(Session())
+    files = []
+    for i in range(3):
+        f = tmp_path / f"big{i}.bin"
+        f.write_bytes(b"0" * 4_900_000)
+        files.append(str(f))
+    w.add_files(files)
+    assert len(w._files) == 3 and "4 files" not in w.status.text()
+    extra = tmp_path / "more.bin"
+    extra.write_bytes(b"0" * 1_000_000)
+    w.add_files([str(extra)])  # 14.7 MB + 1 MB > 15 MB
+    assert len(w._files) == 3 and "15 MB" in w.status.text()
+
+
 def test_closing_the_chat_window_only_hides_it(qapp: QApplication) -> None:
     w = ChatWindow(Session())
     w.show()

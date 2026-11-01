@@ -48,7 +48,7 @@ def shell(command: str) -> str:
             return "ERROR: command refused: executable not found or located inside the workspace"
         cmdline = [exe, *argv[1:]]
     else:  # approved by a human who saw this exact string
-        cmdline = ["powershell", "-NoProfile", "-NonInteractive", "-Command", command]
+        cmdline = [procs.system_exe("powershell"), "-NoProfile", "-NonInteractive", "-Command", command]
     try:
         rc, stdout, stderr = procs.run(cmdline, cwd, timeout)
     except subprocess.TimeoutExpired:
