@@ -120,7 +120,40 @@ class ObservabilityCfg(BaseModel):
     metrics_keep_days: int = 90
 
 
+class SttCfg(BaseModel):
+    provider: str = "google"  # google (Gemini audio) | openai (whisper) | local (faster-whisper, optional extra)
+    model: str = "gemini-3.5-flash-lite"
+    max_seconds: int = 120  # longer recordings are refused (cost / abuse guard)
+
+
+class TtsCfg(BaseModel):
+    enabled: bool = False  # speak answers aloud (edge-tts, runs in the UI process)
+    voice_vi: str = "vi-VN-HoaiMyNeural"
+    voice_en: str = "en-US-AriaNeural"
+    rate: str = "+0%"
+    max_chars: int = 600  # long answers are not read in full
+
+
+class VoiceCfg(BaseModel):
+    stt: SttCfg = Field(default_factory=SttCfg)
+    tts: TtsCfg = Field(default_factory=TtsCfg)
+
+
+class UiCfg(BaseModel):
+    language: str = "auto"  # auto | vi | en  (follows the OS locale when auto)
+    avatar_enabled: bool = True
+    skin: str = "default"
+    avatar_scale: float = 1.0
+    avatar_always_on_top: bool = True
+    avatar_wander: bool = False
+    sleep_after_s: int = 300
+    hotkeys: dict[str, str] = Field(default_factory=lambda: {
+        "kill": "ctrl+alt+k", "talk": "ctrl+alt+space", "chat": "ctrl+alt+a"})
+
+
 class Settings(BaseModel):
+    voice: VoiceCfg = Field(default_factory=VoiceCfg)
+    ui: UiCfg = Field(default_factory=UiCfg)
     observability: ObservabilityCfg = Field(default_factory=ObservabilityCfg)
     agent: AgentCfg = Field(default_factory=AgentCfg)
     workers: WorkersCfg = Field(default_factory=WorkersCfg)
@@ -166,6 +199,12 @@ def _yaml(p: Path) -> dict[str, Any]:
 def load_settings() -> Settings:
     raw = _merge(_yaml(config_dir() / "default.yaml"), _yaml(data_dir() / "config.yaml"))
     return Settings.model_validate(raw)
+
+
+def save_overrides(patch: dict[str, Any]) -> None:
+    """Deep-merge `patch` into %APPDATA%\\personal-agent\\config.yaml (the user override file)."""
+    path = data_dir() / "config.yaml"
+    path.write_text(yaml.safe_dump(_merge(_yaml(path), patch), allow_unicode=True), encoding="utf-8")
 
 
 # Names go into the system prompt, so keep them to a short, plain, single-line shape.

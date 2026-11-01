@@ -22,6 +22,12 @@ python -m uv run mypy src
 
 The per-install API token is created on first start and stored in Credential Manager; logs go to `%APPDATA%\personal-agent\logs\`.
 
+## Phase 7: desktop UI
+`python -m uv sync --extra ui --extra voice`, then `python -m uv run agent-ui`: tray icon, chat (markdown, attachments, pasted images, voice),
+approval center with diffs, manager pages (memory, documents, MCP, schedules, audit, usage, policy), settings, first-run wizard and a desktop
+avatar with skins (`docs/skins.md`). Hotkeys: `Ctrl+Alt+K` kill switch, `Ctrl+Alt+Space` talk, `Ctrl+Alt+A` chat. Vietnamese and English.
+Details, defaults and what was not verified on a real desktop: `docs/phase7.md`.
+
 ## Phase 6: observability and evals
 Local metrics (latency, error rate, tool success per day) are always on: `/usage` in `agent-chat`. Optional Langfuse tracing: set
 `LANGFUSE_PUBLIC_KEY` / `LANGFUSE_SECRET_KEY` / `LANGFUSE_BASE_URL` in `.env` and run `python -m uv sync --extra observability`.

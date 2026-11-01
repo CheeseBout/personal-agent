@@ -1,10 +1,18 @@
 {
   "name": "default",
-  "version": 0,
-  "note": "Placeholder: sprites and real animations are delivered in Phase 7.",
+  "version": 1,
+  "note": "The default skin is drawn in code (ui/skin.py). To make your own, copy this folder's idea to config/avatar/<name>/ with sprite files; see docs/skins.md.",
+  "size": [128, 128],
+  "fallback": "idle",
   "states": {
-    "idle": null, "listening": null, "thinking": null, "working": null, "speaking": null,
-    "awaiting_approval": null, "success": null, "error": null, "sleeping": null
-  },
-  "fallback": "idle"
+    "idle": {"builtin": "idle"},
+    "listening": {"builtin": "listening"},
+    "thinking": {"builtin": "thinking"},
+    "working": {"builtin": "working"},
+    "speaking": {"builtin": "speaking"},
+    "awaiting_approval": {"builtin": "awaiting_approval"},
+    "success": {"builtin": "success"},
+    "error": {"builtin": "error"},
+    "sleeping": {"builtin": "sleeping"}
+  }
 }

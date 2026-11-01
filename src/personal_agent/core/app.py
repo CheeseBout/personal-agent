@@ -4,6 +4,7 @@ the kill switch can be received while a turn is running or paused."""
 from __future__ import annotations
 
 import asyncio
+import base64
 import os
 import re
 import secrets
@@ -17,8 +18,20 @@ from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconn
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 from langgraph.errors import GraphRecursionError
+from starlette.websockets import WebSocketDisconnected
 
 from personal_agent import mcp_client, services
+from personal_agent.core.admin import (
+    apply_patch,
+    policy_add_path,
+    policy_save,
+    policy_text,
+    public_settings,
+    save_secret,
+    secrets_status,
+    test_role,
+)
+from personal_agent.core.attachments import build_content
 from personal_agent.graph.brain import Brain
 from personal_agent.graph.builder import build_graph, resume_command
 from personal_agent.graph.context import text_of
@@ -31,11 +44,13 @@ from personal_agent.observability.tracing import Tracing
 from personal_agent.observability.usage import Meter
 from personal_agent.policy.approvals import ApprovalStore
 from personal_agent.policy.killswitch import KillSwitch
+from personal_agent.rag.loaders import UnsupportedDocument
 from personal_agent.rag.watch import FolderWatcher
 from personal_agent.settings.secrets import get_api_token
 from personal_agent.settings.settings import data_dir, load_settings, set_agent_name
 from personal_agent.tools import procs
 from personal_agent.tools.registry import policy
+from personal_agent.voice import stt
 
 log = structlog.get_logger()
 _THREAD_ID = re.compile(r"^[\w\-]{1,64}$")
@@ -197,7 +212,7 @@ def create_app(brain: Brain | None = None, db_path: Path | None = None, token: s
             while True:
                 msg = await ws.receive_json()
                 await handle(msg, send)
-        except WebSocketDisconnect:
+        except (WebSocketDisconnect, WebSocketDisconnected):  # the 2nd one: a send failed first, then we tried to read
             return
         finally:
             app.state.clients.discard(send)
@@ -244,9 +259,57 @@ def create_app(brain: Brain | None = None, db_path: Path | None = None, token: s
             return {"type": "schedules", "items": services.scheduler().jobs()}
         return {"type": "schedule_cancel", "ok": services.scheduler().cancel(int(msg["id"]))}
 
+    ADMIN = {"settings_get", "settings_set", "secret_set", "test_role", "policy_get", "policy_set", "policy_add_path", "transcribe", "about"}
+
+    def stt_text(audio: bytes, mime: str) -> str:
+        """Transcribe audio (blocking; call from a thread). The daily cap is checked first, cloud usage is metered."""
+        if r := app.state.meter.daily_exceeded(settings.budgets):
+            raise ValueError(f"daily usage cap reached ({r})")
+        try:
+            text, tin, tout = stt.transcribe(audio, mime, settings.voice.stt)
+        except stt.SttError as e:
+            raise ValueError(str(e)) from e
+        if tin or tout:
+            app.state.meter.record(settings.voice.stt.model, tin, tout)
+        return text
+
+    async def admin(kind: str, msg: dict[str, Any]) -> dict[str, Any]:
+        """Settings / secrets / policy / voice calls behind the Settings, Policy and chat-microphone UI."""
+        s = app.state
+        if kind == "settings_get":
+            return {"type": "settings", **public_settings(settings)}
+        if kind == "settings_set":
+            changed = apply_patch(settings, msg.get("patch") or {})
+            if "models" in changed and not s.tasks:
+                s.graph = s.make_graph()  # fresh LiveBrain: new model choices apply to the next turn
+            return {"type": "settings", "changed": sorted(changed), "applied_now": "models" not in changed or not s.tasks,
+                    **public_settings(settings)}
+        if kind == "secret_set":
+            save_secret(str(msg.get("name")), str(msg.get("value")))
+            return {"type": "secrets", "secrets": secrets_status()}  # values are never echoed
+        if kind == "test_role":
+            return {"type": "test_role", "role": msg.get("role"), **await test_role(settings, str(msg.get("role")))}
+        if kind == "policy_get":
+            return {"type": "policy", "text": policy_text()}
+        if kind in ("policy_set", "policy_add_path"):
+            if kind == "policy_set":
+                policy_save(str(msg.get("text")))
+            else:
+                policy_add_path(str(msg.get("path")))
+            return {"type": "policy", "text": policy_text(), "saved": True}
+        if kind == "transcribe":
+            audio = base64.b64decode(str(msg.get("data", "")), validate=True)
+            return {"type": "transcript", "text": await asyncio.to_thread(stt_text, audio, str(msg.get("mime", "audio/wav")))}
+        return {"type": "about", "pid": os.getpid()}
+
     async def handle(msg: Any, send: Send) -> None:
         s = app.state
         kind = msg.get("type", "user") if isinstance(msg, dict) else None
+        if isinstance(kind, str) and kind in ADMIN:
+            try:
+                return await send(await admin(kind, msg))
+            except (ValueError, TypeError, KeyError, OSError) as e:
+                return await send({"type": "error", "code": "bad_request", "message": str(e)[:200]})
         if kind == "kill":
             await send({"type": "killed", "threads": await do_kill()})
         elif kind == "release_kill":
@@ -316,13 +379,17 @@ def create_app(brain: Brain | None = None, db_path: Path | None = None, token: s
                 return await send({"type": "error", "code": "bad_request", "message": "this thread is not waiting for approval"})
             graph_input: Any = resume_command(decisions)
         else:
-            text = msg.get("text")
-            if not isinstance(text, str) or not text.strip() or len(text) > MAX_TEXT:
+            text, files = msg.get("text") or "", msg.get("attachments")
+            if not isinstance(text, str) or len(text) > MAX_TEXT or not (text.strip() or files):
                 return await send({"type": "error", "code": "bad_request", "message": "invalid text"})
             if pending:  # a new request would orphan the paused tool calls
                 return await send({"type": "error", "code": "approval_pending",
                                    "message": "this thread is waiting for your approval decision first", "items": pending})
-            graph_input = {"messages": [HumanMessage(text)]}
+            try:
+                content = await asyncio.to_thread(build_content, text, files, stt_text)
+            except (ValueError, OSError, UnsupportedDocument) as e:
+                return await send({"type": "error", "code": "bad_request", "message": str(e)[:200]})
+            graph_input = {"messages": [HumanMessage(content)]}
         # Budgets stop runs in code; this is only a backstop against a routing bug.
         config = app.state.tracing.run_config(tid, settings.budgets.max_steps * 8 + 40)
         final, paused = "", False
