@@ -201,9 +201,10 @@ def skins_root() -> Path:
 
 
 def available_skins() -> list[str]:
-    root = skins_root()
-    names = ["default"] + sorted(p.name for p in root.iterdir() if (p / "manifest.json").is_file() and p.name != "default") if root.is_dir() else ["default"]
-    return names
+    from personal_agent.settings.settings import data_dir
+
+    found = {p.name for root in (data_dir() / "skins", skins_root()) if root.is_dir() for p in root.iterdir() if (p / "manifest.json").is_file()}
+    return ["default"] + sorted(found - {"default"})
 
 
 def load_skin(name: str) -> Skin:
