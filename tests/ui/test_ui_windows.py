@@ -8,7 +8,7 @@ from typing import Any
 
 import pytest
 from PySide6.QtCore import QMimeData, QPoint, QPointF, Qt, QUrl
-from PySide6.QtGui import QColor, QDropEvent, QImage, QPixmap
+from PySide6.QtGui import QColor, QDropEvent, QImage, QPixmap, QShortcut
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QPushButton
 
@@ -407,3 +407,12 @@ def test_wizard_saves_the_key_then_tests_a_role_of_that_provider(qapp: QApplicat
     w.provider.setCurrentText("openrouter")
     w.test_btn.click()
     assert "No model uses this provider" in w.test_result.text()
+
+
+def test_chat_quit_button_and_shortcut_emit_quit_requested(qapp: QApplication) -> None:
+    w = ChatWindow(Session())
+    got: list[int] = []
+    w.quit_requested.connect(lambda: got.append(1))
+    w.quit_btn.click()
+    w.findChildren(QShortcut)[0].activated.emit()  # offscreen windows are never active, so keyClick cannot trigger it
+    assert got == [1, 1]

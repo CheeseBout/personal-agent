@@ -25,8 +25,7 @@ from PySide6.QtWidgets import (
 from personal_agent.ui.decisions import build_decisions
 from personal_agent.ui.i18n import tr
 from personal_agent.ui.model import Session
-
-RISK_COLOR = {"low": "#9ece6a", "medium": "#e0af68", "high": "#ff9e64", "critical": "#f7768e"}
+from personal_agent.ui.theme import mono, risk_color, tok
 
 
 class DiffHighlighter(QSyntaxHighlighter):
@@ -40,7 +39,7 @@ class DiffHighlighter(QSyntaxHighlighter):
             if bold:
                 f.setFontWeight(QFont.Weight.Bold)
             return f
-        self._add, self._del, self._hunk, self._head = fmt("#9ece6a"), fmt("#f7768e"), fmt("#7aa2f7"), fmt("#c0caf5", True)
+        self._add, self._del, self._hunk, self._head = fmt(tok("add")), fmt(tok("del")), fmt(tok("hunk")), fmt(tok("ink"), True)
 
     def highlightBlock(self, text: str) -> None:
         if text.startswith(("+++", "---")):
@@ -65,7 +64,8 @@ class ApprovalCard(QGroupBox):
         self.a = a
         lay = QVBoxLayout(self)
         risk = str(a.get("risk", ""))
-        head = QLabel(f"<b>{a['tool']}</b> &nbsp; <span style='color:{RISK_COLOR.get(risk, '#c0caf5')}'>"
+        self.setProperty("risk", risk)
+        head = QLabel(f"<b>{a['tool']}</b> &nbsp; <span style='color:{risk_color(risk)}'>"
                       f"{a.get('tier', '')} · {tr('risk', 'rủi ro')} {risk}</span>")
         head.setTextFormat(Qt.TextFormat.RichText)
         lay.addWidget(head)
@@ -76,7 +76,7 @@ class ApprovalCard(QGroupBox):
             warn = QLabel("⚠ " + tr("This action follows untrusted content (web page, file or tool output). Check it carefully.",
                                     "Hành động này đến sau nội dung không đáng tin (web, tệp, kết quả công cụ). Hãy kiểm tra kỹ."))
             warn.setWordWrap(True)
-            warn.setStyleSheet("color:#ff9e64")
+            warn.setProperty("role", "warn")
             lay.addWidget(warn)
         exp = a.get("expires_at")
         if exp:
@@ -86,11 +86,12 @@ class ApprovalCard(QGroupBox):
         lay.addWidget(_wrapped(tr("Arguments (editable; changing them approves the edited call)", "Tham số (sửa được; sửa nghĩa là duyệt bản đã sửa)")))
         self.args = QPlainTextEdit(json.dumps(a["args"], ensure_ascii=False, indent=2))
         self.args.setMaximumHeight(110)
+        self.args.setFont(mono())
         lay.addWidget(self.args)
         lay.addWidget(QLabel(tr("Preview / diff", "Xem trước / khác biệt")))
         self.preview = QPlainTextEdit(str(a.get("preview", "")))
         self.preview.setReadOnly(True)
-        self.preview.setFont(QFont("Consolas", 9))
+        self.preview.setFont(mono())
         self.preview.setMinimumHeight(110)
         DiffHighlighter(self.preview.document())
         lay.addWidget(self.preview)
@@ -124,14 +125,18 @@ class ThreadBox(QFrame):
         super().__init__()
         self.thread_id = thread_id
         lay = QVBoxLayout(self)
-        lay.addWidget(QLabel(f"<b>{tr('Thread', 'Luồng')}: {thread_id}</b>"))
+        self.setProperty("role", "thread")
+        title = QLabel(f"{tr('Thread', 'Luồng')}: {thread_id}")
+        title.setProperty("role", "title")
+        lay.addWidget(title)
         self.cards = [ApprovalCard(a) for a in items]
         for c in self.cards:
             lay.addWidget(c)
         self.error = QLabel()
-        self.error.setStyleSheet("color:#f7768e")
+        self.error.setProperty("role", "error")
         lay.addWidget(self.error)
         self.submit = QPushButton(tr("Send decisions", "Gửi quyết định"))
+        self.submit.setProperty("role", "primary")
         self.submit.clicked.connect(self._submit)
         lay.addWidget(self.submit)
 

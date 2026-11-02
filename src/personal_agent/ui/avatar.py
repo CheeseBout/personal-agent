@@ -22,6 +22,7 @@ from PySide6.QtGui import (
 from PySide6.QtWidgets import QApplication, QLabel, QMenu, QVBoxLayout, QWidget
 
 from personal_agent.ui.skin import Animation, Skin
+from personal_agent.ui.theme import AVATAR_INK, STATE
 
 SNAP_PX = 24
 DRAG_PX = 4
@@ -153,8 +154,8 @@ class AvatarWindow(QWidget):
                 pm = pm.copy()
                 p = QPainter(pm)
                 p.setRenderHint(QPainter.RenderHint.Antialiasing)
-                p.setBrush(QColor("#f7768e"))
-                p.setPen(QPen(QColor("#1a1b26"), 2))
+                p.setBrush(QColor(STATE["error"]))
+                p.setPen(QPen(QColor(AVATAR_INK), 2))
                 p.drawEllipse(QPoint(pm.width() - 13, 13), 7, 7)
                 p.end()
             self._cache[key] = pm
@@ -278,7 +279,7 @@ class SpeechBubble(QWidget):
         self._label = QLabel(self)
         self._label.setWordWrap(True)
         self._label.setMaximumWidth(260)
-        self._label.setStyleSheet("background:#24283b;color:#c0caf5;border:1px solid #565f89;border-radius:10px;padding:8px 10px;")
+        self._label.setObjectName("Bubble")
         lay = QVBoxLayout(self)
         lay.setContentsMargins(0, 0, 0, 0)
         lay.addWidget(self._label)

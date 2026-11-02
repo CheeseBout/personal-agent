@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from PySide6.QtCore import QMimeData, Qt, Signal
-from PySide6.QtGui import QImage, QKeyEvent
+from PySide6.QtGui import QImage, QKeyEvent, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QFileDialog,
     QHBoxLayout,
@@ -74,7 +74,7 @@ class PlanPanel(QWidget):
         super().__init__()
         lay = QVBoxLayout(self)
         self.title = QLabel()
-        self.title.setStyleSheet("font-weight:600")
+        self.title.setProperty("role", "title")
         self.objective = QLabel()
         self.objective.setWordWrap(True)
         self.criteria = QListWidget()
@@ -134,6 +134,7 @@ class ChatWindow(QMainWindow):
     submitted = Signal(str, list)  # text, attachments
     record_toggled = Signal(bool)
     stop_requested = Signal()
+    quit_requested = Signal()
 
     def __init__(self, session: Session) -> None:
         super().__init__()
@@ -148,16 +149,20 @@ class ChatWindow(QMainWindow):
         self.composer.send.connect(self._send)
         self.composer.image_pasted.connect(self._paste_image)
         self.chips = QLabel()
-        self.chips.setStyleSheet("color:#7aa2f7")
+        self.chips.setProperty("role", "chip")
         self.status = QLabel()
-        self.attach_btn, self.mic_btn, self.send_btn, self.stop_btn = (QPushButton() for _ in range(4))
+        self.attach_btn, self.mic_btn, self.send_btn, self.stop_btn, self.quit_btn = (QPushButton() for _ in range(5))
+        self.quit_btn.clicked.connect(self.quit_requested)
+        QShortcut(QKeySequence("Ctrl+Q"), self, self.quit_requested.emit)
         self.attach_btn.clicked.connect(self._pick_files)
         self.mic_btn.setCheckable(True)
         self.mic_btn.toggled.connect(self._mic)
+        self.send_btn.setProperty("role", "primary")
         self.send_btn.clicked.connect(self._send)
+        self.stop_btn.setProperty("role", "danger")
         self.stop_btn.clicked.connect(self.stop_requested)
         row = QHBoxLayout()
-        for b in (self.attach_btn, self.mic_btn, self.stop_btn, self.send_btn):
+        for b in (self.attach_btn, self.mic_btn, self.stop_btn, self.send_btn, self.quit_btn):
             row.addWidget(b)
         row.insertWidget(3, self.status, 1)
         left = QWidget()
@@ -184,6 +189,8 @@ class ChatWindow(QMainWindow):
         self.mic_btn.setText(tr("🎤 Talk", "🎤 Nói"))
         self.stop_btn.setText(tr("Stop all", "Dừng tất cả"))
         self.send_btn.setText(tr("Send", "Gửi"))
+        self.quit_btn.setText(tr("Quit", "Thoát"))
+        self.quit_btn.setToolTip(tr("Close the app (Ctrl+Q). The background agent keeps running.", "Đóng ứng dụng (Ctrl+Q). Agent nền vẫn chạy."))
         self.composer.setPlaceholderText(tr("Message… (Enter sends, Shift+Enter = new line; paste or drop images and files)",
                                             "Tin nhắn… (Enter để gửi, Shift+Enter xuống dòng; dán hoặc kéo thả ảnh, tệp)"))
         self.plan.retranslate()
@@ -286,7 +293,8 @@ class QuickInput(QWidget):
         lay = QVBoxLayout(self)
         lay.addWidget(self.hint)
         lay.addWidget(self.edit)
-        self.setStyleSheet("QWidget{background:#24283b;color:#c0caf5;border:1px solid #565f89;border-radius:8px}")
+        self.setObjectName("QuickInput")
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground)
         self.resize(320, 110)
         self.retranslate()
 

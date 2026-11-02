@@ -168,6 +168,7 @@ class PolicyPage(QWidget):
         self.status = QLabel()
         row = QHBoxLayout()
         self.reload_btn, self.save_btn = QPushButton(), QPushButton()
+        self.save_btn.setProperty("role", "primary")
         self.reload_btn.clicked.connect(self.refresh)
         self.save_btn.clicked.connect(lambda: self._send({"type": "policy_set", "text": self.editor.toPlainText()}))
         row.addWidget(self.reload_btn)

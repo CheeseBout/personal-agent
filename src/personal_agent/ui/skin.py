@@ -22,12 +22,12 @@ from PySide6.QtCore import QPointF, QRectF, Qt
 from PySide6.QtGui import QBrush, QColor, QFont, QMovie, QPainter, QPen, QPixmap, QRadialGradient
 
 from personal_agent.ui.avatar_state import STATES
+from personal_agent.ui.theme import AVATAR_INK, STATE
 
 BASE = 128
 BUILTIN_FRAMES = 6
 MAX_SIZE = 512
-COLORS = {"idle": "#7aa2f7", "listening": "#7dcfff", "thinking": "#bb9af7", "working": "#e0af68", "speaking": "#9ece6a",
-          "awaiting_approval": "#ff9e64", "success": "#73daca", "error": "#f7768e", "sleeping": "#565f89"}
+COLORS = STATE
 
 
 @dataclass
@@ -55,9 +55,9 @@ def draw_builtin(state: str, frame: int, size: int = BASE) -> QPixmap:
     p.setBrush(QBrush(g))
     p.setPen(QPen(col.darker(160), 2.5))
     p.drawEllipse(body)
-    dark = QPen(QColor("#1a1b26"), 3.2, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap)
+    dark = QPen(QColor(AVATAR_INK), 3.2, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap)
     p.setPen(dark)
-    p.setBrush(QColor("#1a1b26"))
+    p.setBrush(QColor(AVATAR_INK))
     eye_y = 64 + bob
     blink = frame == n - 1 and state in ("idle", "listening", "speaking")
     for ex in (46, 82):
@@ -69,7 +69,7 @@ def draw_builtin(state: str, frame: int, size: int = BASE) -> QPixmap:
         elif state == "success":
             p.setBrush(Qt.BrushStyle.NoBrush)
             p.drawArc(QRectF(ex - 6, eye_y - 4, 12, 10), 0, 180 * 16)
-            p.setBrush(QColor("#1a1b26"))
+            p.setBrush(QColor(AVATAR_INK))
         else:
             r = 6.5 if state in ("listening", "awaiting_approval") else 5.0
             look = math.sin(frame / n * 2 * math.pi) * 2 if state in ("thinking", "working") else 0
@@ -97,14 +97,14 @@ def draw_builtin(state: str, frame: int, size: int = BASE) -> QPixmap:
         p.setBrush(Qt.BrushStyle.NoBrush)
         p.drawArc(QRectF(50, 4, 28, 28), int(frame / n * 360 * 16), 270 * 16)
     elif state == "awaiting_approval":
-        p.setFont(QFont("Segoe UI", 20, QFont.Weight.Bold))
+        p.setFont(QFont("Bahnschrift", 20, QFont.Weight.Bold))
         p.drawText(QRectF(54, 0 + (frame % 2) * 2, 22, 30), Qt.AlignmentFlag.AlignCenter, "!")
     elif state == "listening":
         p.setBrush(Qt.BrushStyle.NoBrush)
         for k in range(2):
             p.drawArc(QRectF(100 + k * 6, 56 - k * 4, 12 + k * 4, 24 + k * 8), -60 * 16, 120 * 16)
     elif state == "sleeping":
-        p.setFont(QFont("Segoe UI", 12 + (frame % 3) * 2, QFont.Weight.Bold))
+        p.setFont(QFont("Bahnschrift", 12 + (frame % 3) * 2, QFont.Weight.Bold))
         p.drawText(QRectF(86, 6, 30, 26), Qt.AlignmentFlag.AlignCenter, "z")
     elif state == "success":
         p.setBrush(QColor(col.darker(130)))

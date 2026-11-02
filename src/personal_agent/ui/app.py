@@ -36,6 +36,7 @@ from personal_agent.ui.screen import (
 from personal_agent.ui.settings_dialog import FirstRunWizard, SettingsDialog
 from personal_agent.ui.skin import draw_builtin, load_skin, skins_root
 from personal_agent.ui.system import Hotkeys
+from personal_agent.ui.theme import apply as apply_theme
 from personal_agent.ui.voice_io import Recorder, Speaker
 
 PROVIDER_KEYS = ("ANTHROPIC_API_KEY", "GOOGLE_API_KEY", "OPENAI_API_KEY", "OPENROUTER_API_KEY")
@@ -94,6 +95,7 @@ class UiApp:
         c.disconnected.connect(self.on_disconnected)
         self.chat.submitted.connect(self.send_user)
         self.chat.stop_requested.connect(self.kill)
+        self.chat.quit_requested.connect(self.quit)
         self.chat.record_toggled.connect(lambda on: self.start_recording("chat") if on else self.recorder.stop())
         self.quick.submitted.connect(self.send_user)
         self.approvals.decided.connect(self.send_decisions)
@@ -462,6 +464,7 @@ def main() -> None:
     ap.add_argument("--no-daemon", action="store_true", help="do not start the daemon when it is not running")
     a = ap.parse_args()
     qapp = QApplication(sys.argv)
+    apply_theme(qapp)
     qapp.setQuitOnLastWindowClosed(False)  # lives in the tray
     lock = QLockFile(str(Path(tempfile.gettempdir()) / "personal-agent-ui.lock"))
     lock.setStaleLockTime(0)

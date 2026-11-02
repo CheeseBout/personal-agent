@@ -13,6 +13,7 @@ from PySide6.QtWidgets import QWidget
 from personal_agent.settings.settings import ScreenCfg
 from personal_agent.ui import attach
 from personal_agent.ui.i18n import tr
+from personal_agent.ui.theme import AVATAR_INK, STATE
 
 Rect = tuple[int, int, int, int]
 
@@ -89,13 +90,14 @@ class HighlightOverlay(QWidget):
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
         box = self.rect().adjusted(2, 24, -2, -2)
-        p.setPen(QPen(QColor("#ff9e64"), 3))
-        p.setBrush(QColor(255, 158, 100, 40))
+        hl = QColor(STATE["awaiting_approval"])
+        p.setPen(QPen(hl, 3))
+        p.setBrush(QColor(hl.red(), hl.green(), hl.blue(), 40))
         p.drawRoundedRect(box, 5, 5)
-        p.setFont(QFont("Segoe UI", 9, QFont.Weight.Bold))
-        p.setPen(QColor("#1a1b26"))
+        p.setFont(QFont("Bahnschrift", 9, QFont.Weight.DemiBold))
+        p.setPen(QColor(AVATAR_INK))
         w = p.fontMetrics().horizontalAdvance(self._label) + 14
-        p.fillRect(QRect(2, 2, min(w, self.width() - 4), 20), QColor("#ff9e64"))
+        p.fillRect(QRect(2, 2, min(w, self.width() - 4), 20), hl)
         p.drawText(QRect(9, 2, self.width() - 12, 20), Qt.AlignmentFlag.AlignVCenter, self._label)
 
 
@@ -110,14 +112,14 @@ class WatchIndicator(QWidget):
                             | Qt.WindowType.WindowDoesNotAcceptFocus | Qt.WindowType.NoDropShadowWindowHint)
         self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
         self.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
-        self.text, self.color = "", "#f7768e"
+        self.text, self.color = "", STATE["error"]
         self.setFixedHeight(28)
 
     def set_state(self, state: str, minutes_left: float = 0.0, private: bool = False) -> None:
         if state == "off":
             self.hide()
             return
-        self.color = "#f7768e" if state == "on" else "#e0af68"
+        self.color = STATE["error"] if state == "on" else STATE["working"]
         note = tr(" · private window skipped", " · bỏ qua cửa sổ riêng tư") if private else ""
         self.text = (tr("Watching the screen ({m:.0f} min left)", "Đang theo dõi màn hình (còn {m:.0f} phút)", m=minutes_left)
                      if state == "on" else tr("Screen watching paused", "Tạm dừng theo dõi màn hình")) + note + "  ✕"
@@ -132,13 +134,13 @@ class WatchIndicator(QWidget):
     def paintEvent(self, _: object) -> None:
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
-        p.setBrush(QColor("#24283b"))
+        p.setBrush(QColor(AVATAR_INK))
         p.setPen(QPen(QColor(self.color), 2))
         p.drawRoundedRect(self.rect().adjusted(1, 1, -1, -1), 14, 14)
         p.setBrush(QColor(self.color))
         p.setPen(Qt.PenStyle.NoPen)
         p.drawEllipse(QPoint(16, 14), 5, 5)
-        p.setPen(QColor("#c0caf5"))
+        p.setPen(QColor("white"))
         p.drawText(QRect(28, 0, self.width() - 32, 28), Qt.AlignmentFlag.AlignVCenter, self.text)
 
     def mousePressEvent(self, _: QMouseEvent) -> None:
@@ -182,7 +184,7 @@ class RegionSelector(QWidget):
             p.setCompositionMode(QPainter.CompositionMode.CompositionMode_Clear)
             p.fillRect(r, Qt.GlobalColor.transparent)
             p.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceOver)
-            p.setPen(QPen(QColor("#7aa2f7"), 2))
+            p.setPen(QPen(QColor(STATE["idle"]), 2))
             p.drawRect(r)
         p.setPen(QColor("white"))
         p.drawText(self.rect().adjusted(0, 20, 0, 0), Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop,

@@ -20,6 +20,7 @@ from personal_agent.ui.i18n import set_language
 from personal_agent.ui.screen import HighlightOverlay, RegionSelector, WatchIndicator
 from personal_agent.ui.settings_dialog import SettingsDialog
 from personal_agent.ui.skin import Skin
+from personal_agent.ui.theme import STATE
 
 
 @pytest.fixture(autouse=True)
@@ -41,9 +42,9 @@ def test_watch_indicator_is_visible_only_while_watching_and_click_stops_it(qapp:
     w.set_state("off")
     assert not w.isVisible()
     w.set_state("on", 12.4)
-    assert w.isVisible() and "12 min" in w.text and w.color == "#f7768e"
+    assert w.isVisible() and "12 min" in w.text and w.color == STATE["error"]
     w.set_state("paused")
-    assert "paused" in w.text and w.color == "#e0af68"
+    assert "paused" in w.text and w.color == STATE["working"]
     w.set_state("on", 3, private=True)
     assert "private window skipped" in w.text
     got: list[int] = []

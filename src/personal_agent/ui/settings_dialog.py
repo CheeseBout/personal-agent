@@ -253,6 +253,7 @@ class SettingsDialog(QDialog):
                 edit.setEchoMode(QLineEdit.EchoMode.Password)
                 edit.setPlaceholderText(tr("paste a new value to replace it", "dán giá trị mới để thay"))
                 save = QPushButton(tr("Save key", "Lưu khóa"))
+                save.setProperty("role", "primary")
                 save.clicked.connect(lambda _=False, n=name, e=edit: self._save_key(n, e))
                 row = QWidget()
                 h = QHBoxLayout(row)
@@ -388,6 +389,7 @@ class FirstRunWizard(QWizard):
         self.key = QLineEdit()
         self.key.setEchoMode(QLineEdit.EchoMode.Password)
         self.test_btn, self.test_result = QPushButton(tr("Save key and test", "Lưu khóa và thử")), QLabel()
+        self.test_btn.setProperty("role", "primary")
         self.test_btn.clicked.connect(self._save_and_test)
         for w in (QLabel(tr("The key is stored in Windows Credential Manager, never in a file.", "Khóa được lưu trong Windows Credential Manager, không lưu vào tệp.")),
                   self.provider, self.key, self.test_btn, self.test_result):
