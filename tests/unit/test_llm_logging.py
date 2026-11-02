@@ -63,3 +63,12 @@ def test_log_redaction() -> None:
     flat = str(out)
     assert "abcdefgh" not in flat and "abc.def" not in flat and "zzzzzzzz" not in flat
     assert out["api_key"] == "***" and out["nested"]["token"] == "***"
+
+
+def test_ollama_reasoning_effort_only_when_set():
+    from personal_agent.llm.factory import build_chat_model
+    from personal_agent.settings.settings import ModelRef
+
+    ref = ModelRef(provider="ollama", model="gemma4:e2b")
+    assert build_chat_model(ref, ModelSpec(**ref.model_dump(), reasoning_effort="none")).reasoning_effort == "none"
+    assert build_chat_model(ref, ModelSpec(**ref.model_dump())).reasoning_effort is None

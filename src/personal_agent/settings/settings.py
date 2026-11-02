@@ -22,6 +22,7 @@ class ModelSpec(ModelRef):
     temperature: float | None = None
     max_tokens: int | None = None
     timeout_s: float = 60.0
+    reasoning_effort: str | None = None  # ollama only: "none" turns thinking off for this role (per request, the model is untouched)
     fallbacks: list[ModelRef] = Field(default_factory=list)
 
 

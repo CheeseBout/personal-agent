@@ -53,6 +53,8 @@ def build_chat_model(ref: ModelRef, spec: ModelSpec | None = None, retries: int 
         elif ref.provider == "ollama":  # Ollama's OpenAI-compatible endpoint; no new dependency
             kw["base_url"] = (get_secret("OLLAMA_HOST") or OLLAMA_URL).rstrip("/") + "/v1"
             kw["max_retries"] = 0  # fail fast to the fallback if the daemon is down
+            if spec is not None and spec.reasoning_effort:
+                kw["reasoning_effort"] = spec.reasoning_effort
         return ChatOpenAI(**kw)
     if ref.provider == "anthropic":
         from langchain_anthropic import ChatAnthropic

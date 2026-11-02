@@ -18,16 +18,16 @@ x-fb-haiku: &fbh          # Haiku-primary planner/critic: Google, then OpenAI (n
   - {provider: google, model: gemini-3.5-flash-lite}
   - {provider: openai, model: gpt-4o}
 models:
-  # Measured 2026-11-01 on this machine: ollama gemma4:e4b needed 13-65 s per classification and returned JSON missing required
-  # fields, so every turn waited out the timeout before the fallback. To retry it: {provider: ollama, model: "gemma4:e4b",
-  # timeout_s: 30, fallbacks: [{provider: anthropic, model: claude-haiku-5-5}]} and re-measure with `agent-eval`.
-  classifier: {provider: anthropic, model: claude-haiku-5-5,      max_tokens: 600,  fallbacks: *fbh}
+  # Local gemma4:e2b for classifier + vision, thinking off (reasoning_effort: none; with it on, a turn took 25+ s). Measured 2026-11-02:
+  # agent-eval 10/10 (same as Haiku), ~3-4 s slower per turn. On a timeout/error the call falls back to Haiku, then Gemini, then gpt-4o
+  # (vision falls back to the cloud with the screenshot). Earlier gemma4:e4b with thinking on gave 13-65 s and incomplete JSON.
+  classifier: {provider: ollama,    model: "gemma4:e2b",         max_tokens: 600,  timeout_s: 30, reasoning_effort: none, fallbacks: [{provider: anthropic, model: claude-haiku-5-5}, {provider: google, model: gemini-3.5-flash-lite}, {provider: openai, model: gpt-4o}]}
   fast:       {provider: google,    model: gemini-3.5-flash-lite, max_tokens: 2000, fallbacks: *fb}
   summarizer: {provider: google,    model: gemini-3.5-flash-lite, max_tokens: 1000, fallbacks: *fb}
   planner:    {provider: anthropic, model: claude-haiku-5-5,      max_tokens: 2000, fallbacks: *fbh}
   critic:     {provider: anthropic, model: claude-haiku-5-5,      max_tokens: 1200, fallbacks: *fbh}
   worker:     {provider: google,    model: gemini-3.5-flash-lite, max_tokens: 4096, fallbacks: *fb}
-  vision:     {provider: anthropic, model: claude-haiku-5-5,      max_tokens: 2000, fallbacks: *fbh}
+  vision:     {provider: ollama,    model: "gemma4:e2b",         max_tokens: 2000, timeout_s: 90, reasoning_effort: none, fallbacks: [{provider: anthropic, model: claude-haiku-5-5}, {provider: google, model: gemini-3.5-flash-lite}, {provider: openai, model: gpt-4o}]}
 # USD per million tokens (https://platform.claude.com/docs/en/about-claude/pricing, 2026-10-31).
 # Models not listed use `default` (deliberately pessimistic) so unknown models never look free.
 pricing:
@@ -35,6 +35,7 @@ pricing:
   claude-opus-5-5:   {input: 4.00, output: 20.00}
   gemini-3.5-flash-lite: {input: 0.10, output: 0.40}   # ESTIMATE - verify against Google pricing
   "gemma4:e4b":      {input: 0.00, output: 0.00}   # local (Ollama)
+  "gemma4:e2b":      {input: 0.00, output: 0.00}
   default:           {input: 5.00, output: 20.00}
 budgets:                  # per task
   max_steps: 25           # worker LLM calls
