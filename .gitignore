@@ -15,3 +15,6 @@ build/
 # packaging output
 /dist/
 /build/
+
+# graphify output (regenerable: /graphify . --update)
+graphify-out/
