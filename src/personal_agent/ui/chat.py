@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import html
 from typing import Any
 
-from PySide6.QtCore import QMimeData, Qt, Signal
+from PySide6.QtCore import QMimeData, Qt, QTimer, Signal
 from PySide6.QtGui import QImage, QKeyEvent, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QFileDialog,
+    QFrame,
     QHBoxLayout,
     QLabel,
     QListWidget,
@@ -25,6 +27,7 @@ from personal_agent.ui import attach
 from personal_agent.ui.i18n import tr
 from personal_agent.ui.model import Entry, Session
 
+IDLE_CLOSE_MS = 5000  # the quick box closes itself after this long if nothing is typed
 MARK = {"todo": "☐", "done": "✔", "failed": "✖", "blocked": "⏸"}
 
 
@@ -135,6 +138,7 @@ class ChatWindow(QMainWindow):
     record_toggled = Signal(bool)
     stop_requested = Signal()
     quit_requested = Signal()
+    resume_requested = Signal()
 
     def __init__(self, session: Session) -> None:
         super().__init__()
@@ -150,6 +154,8 @@ class ChatWindow(QMainWindow):
         self.composer.image_pasted.connect(self._paste_image)
         self.chips = QLabel()
         self.chips.setProperty("role", "chip")
+        self.chips.setTextFormat(Qt.TextFormat.RichText)
+        self.chips.linkActivated.connect(self._remove_file)
         self.status = QLabel()
         self.attach_btn, self.mic_btn, self.send_btn, self.stop_btn, self.quit_btn = (QPushButton() for _ in range(5))
         self.quit_btn.clicked.connect(self.quit_requested)
@@ -165,8 +171,17 @@ class ChatWindow(QMainWindow):
         for b in (self.attach_btn, self.mic_btn, self.stop_btn, self.send_btn, self.quit_btn):
             row.addWidget(b)
         row.insertWidget(3, self.status, 1)
+        self.paused = QFrame()  # shown while the kill switch is engaged: the agent refuses every request until resumed
+        self.paused.setObjectName("Paused")
+        pl = QHBoxLayout(self.paused)
+        self.paused_text, self.resume_btn = QLabel(), QPushButton()
+        self.paused_text.setWordWrap(True)
+        self.resume_btn.clicked.connect(self.resume_requested)
+        pl.addWidget(self.paused_text, 1)
+        pl.addWidget(self.resume_btn)
         left = QWidget()
         lay = QVBoxLayout(left)
+        lay.addWidget(self.paused)
         lay.addWidget(self.browser, 1)
         lay.addWidget(self.chips)
         lay.addWidget(self.composer)
@@ -190,6 +205,9 @@ class ChatWindow(QMainWindow):
         self.stop_btn.setText(tr("Stop all", "Dừng tất cả"))
         self.send_btn.setText(tr("Send", "Gửi"))
         self.quit_btn.setText(tr("Quit", "Thoát"))
+        self.paused_text.setText(tr("The agent is paused (kill switch). It will refuse every request until you resume it.",
+                                    "Agent đang tạm dừng (công tắc khẩn). Agent sẽ từ chối mọi yêu cầu cho tới khi bạn cho chạy lại."))
+        self.resume_btn.setText(tr("Resume agent", "Cho agent chạy lại"))
         self.quit_btn.setToolTip(tr("Close the app (Ctrl+Q). The background agent keeps running.", "Đóng ứng dụng (Ctrl+Q). Agent nền vẫn chạy."))
         self.composer.setPlaceholderText(tr("Message… (Enter sends, Shift+Enter = new line; paste or drop images and files)",
                                             "Tin nhắn… (Enter để gửi, Shift+Enter xuống dòng; dán hoặc kéo thả ảnh, tệp)"))
@@ -206,12 +224,15 @@ class ChatWindow(QMainWindow):
             sb.setValue(sb.maximum())
         if ch & {"plan", "usage", "transcript"}:
             self.plan.show_session(self.session)
+        if ch & {"killed", "name"} or changed is None:
+            self.paused.setVisible(self.session.killed)
         if ch & {"busy", "approvals"}:
             n = len(self.session.approvals)
             self.status.setText(self._note or (tr("Waiting for your approval ({n})", "Đang chờ bạn duyệt ({n})", n=n) if n
                                                else tr("Working…", "Đang xử lý…") if self.session.busy else ""))
             self.send_btn.setEnabled(not n)
-        self.chips.setText("  ".join(f"📎 {f['name']}" for f in self._files))
+        self.chips.setText("  ".join(f"📎 {html.escape(f['name'])} <a href=\"rm:{i}\" style=\"text-decoration:none\">✕</a>"
+                                     for i, f in enumerate(self._files)))
 
     # ---- user input -------------------------------------------------------------------------------------------------
     def _room_for(self, a: dict[str, Any]) -> bool:
@@ -230,6 +251,13 @@ class ChatWindow(QMainWindow):
                 continue
             if self._room_for(a):
                 self._files.append(a)
+        self.refresh({"busy"})
+
+    def _remove_file(self, link: str) -> None:
+        i = int(link.removeprefix("rm:"))
+        if 0 <= i < len(self._files):
+            del self._files[i]
+            self._note = ""
         self.refresh({"busy"})
 
     def _pick_files(self) -> None:
@@ -285,17 +313,24 @@ class QuickInput(QWidget):
     def __init__(self) -> None:
         super().__init__()
         self.setWindowFlags(Qt.WindowType.Tool | Qt.WindowType.WindowStaysOnTopHint | Qt.WindowType.FramelessWindowHint)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)  # only the text box is visible
         self._files: list[dict[str, Any]] = []
+        self._idle = QTimer(self)  # closes the box when nothing was typed
+        self._idle.setSingleShot(True)
+        self._idle.setInterval(IDLE_CLOSE_MS)
+        self._idle.timeout.connect(self.hide)
         self.edit = Composer()
         self.edit.setFixedHeight(56)
         self.edit.send.connect(self._send)
+        self.edit.textChanged.connect(self._idle.stop)
         self.hint = QLabel()
         lay = QVBoxLayout(self)
+        lay.setContentsMargins(0, 0, 0, 0)
         lay.addWidget(self.hint)
         lay.addWidget(self.edit)
         self.setObjectName("QuickInput")
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground)
-        self.resize(320, 110)
+        self.setFixedWidth(320)
         self.retranslate()
 
     def retranslate(self) -> None:
@@ -310,11 +345,20 @@ class QuickInput(QWidget):
         if self._files:
             self.hint.setText("  ".join(f"📎 {f['name']}" for f in self._files))
         self.hint.setVisible(bool(self._files) or bool(self.hint.text()))
+        self.adjustSize()
         self.move(near.x() - self.width() + near.width(), near.y() - self.height() - 6 if near.y() > self.height() + 10 else near.y() + near.height() + 6)
         self.show()
         self.raise_()
         self.activateWindow()
         self.edit.setFocus()
+        if self.edit.toPlainText() or self._files:
+            self._idle.stop()
+        else:
+            self._idle.start()
+
+    def hideEvent(self, e: Any) -> None:
+        self._idle.stop()
+        super().hideEvent(e)
 
     def keyPressEvent(self, e: QKeyEvent) -> None:
         if e.key() == Qt.Key.Key_Escape:

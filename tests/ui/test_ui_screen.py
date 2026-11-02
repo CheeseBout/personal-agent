@@ -97,6 +97,25 @@ def test_the_avatar_shows_a_red_dot_while_watching_and_stays_clickable_there(qap
     assert a._pixmap().toImage() == before
 
 
+def test_stroking_the_head_shows_headpat_and_walking_shows_while_it_wanders(qapp: QApplication) -> None:
+    a = AvatarWindow(Skin.default())
+    a.show()
+    for x in (10, 40, 10, 40, 10):  # three direction changes inside the head zone
+        a._stroke(QPoint(x, 5))
+    assert a._shown == "headpat"
+    a._end_pat()
+    assert a._shown == "idle"
+    for x in (10, 40, 10, 40, 10):  # below the head: nothing
+        a._stroke(QPoint(x, a.height() - 5))
+    assert a._shown == "idle"
+    a.set_wander(True)
+    a._wander_step()
+    assert a._shown == "walking"
+    a._walk.stop()
+    a._end_walk()
+    assert a._shown == "idle"
+
+
 # ---- UiApp wiring ---------------------------------------------------------------------------------------------------------------------------
 @pytest.fixture
 def ui(qapp: QApplication, monkeypatch: pytest.MonkeyPatch) -> Any:

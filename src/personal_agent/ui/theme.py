@@ -126,7 +126,9 @@ QMenu::item {{ padding: 6px 22px; border-radius: 4px; }}
 QMenu::item:selected {{ background: {t['accent_soft']}; }}
 QMenu::separator {{ height: 1px; background: {t['line']}; margin: 4px 8px; }}
 
-QWidget#QuickInput {{ background: {t['surface']}; border: 1px solid {t['line']}; border-radius: 10px; }}
+QFrame#Paused {{ background: {t['sunken']}; border: none; border-left: 5px solid {t['critical']}; border-radius: 8px; }}
+QFrame#Paused QLabel {{ color: {t['critical']}; font-weight: 600; }}
+QWidget#QuickInput {{ background: transparent; }}
 QWidget#QuickInput QLabel {{ color: {t['muted']}; }}
 QLabel#Bubble {{ background: {t['surface']}; color: {t['ink']}; border: 1px solid {t['line']}; border-radius: 12px; padding: 9px 12px; }}
 """

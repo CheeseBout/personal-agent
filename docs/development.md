@@ -73,7 +73,7 @@ Tools appear as `<server>_<tool>` with untrusted output; reload from Manager →
             "success": {"frames": ["yay.png"], "fps": 1, "loop": false},
             "error": null}}
 ```
-States: `idle, listening, thinking, working, speaking, awaiting_approval, success, error, sleeping`. A state may use `frames` (PNG/WebP), `gif`, or `{"builtin": "<state>"}`; a missing/failed state falls back to `fallback`, then `idle`, then the built-in drawing. `fps` 0.2-30; `loop: false` stops on the last frame; `size` 32-512 px square at 1×;
+States: `idle, listening, thinking, working, speaking, awaiting_approval, success, error, sleeping`, plus two poses the avatar shows itself: `walking` (while it wanders) and `headpat` (stroking the top of its head with the mouse, no button). A state may use `frames` (PNG/WebP), `gif`, or `{"builtin": "<state>"}`; a missing/failed state falls back to `fallback`, then `idle`, then the built-in drawing. `fps` 0.2-30; `loop: false` stops on the last frame; `size` 32-512 px square at 1×;
 use transparent PNGs (clicks pass through transparent pixels); files must stay inside the skin folder; ≤ 240 frames per state. Animation runs only while the avatar is visible.
 
 **UI strings.** `tr("English", "Tiếng Việt")` everywhere; a test fails on a `tr()` without Vietnamese. **Eval scenarios:** append to `tests/evals/scenarios.yaml`. **Sandbox image:** edit `docker/sandbox/Dockerfile` and bump `sandbox.image` in `policy.yaml`.

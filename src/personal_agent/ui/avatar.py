@@ -18,6 +18,7 @@ from PySide6.QtGui import (
     QPainter,
     QPen,
     QPixmap,
+    QTransform,
 )
 from PySide6.QtWidgets import QApplication, QLabel, QMenu, QVBoxLayout, QWidget
 
@@ -26,6 +27,11 @@ from personal_agent.ui.theme import AVATAR_INK, STATE
 
 SNAP_PX = 24
 DRAG_PX = 4
+PAT_ZONE = 0.4  # top fraction of the avatar that counts as the head
+PAT_MIN_PX = 6  # horizontal travel that counts as one stroke segment
+PAT_STROKES = 3  # direction changes needed (about two back-and-forth strokes)
+PAT_IDLE_MS = 700  # pause that cancels a half-done stroke
+PAT_MS = 2500  # how long the headpat pose stays
 
 
 def snap_to_edges(rect: QRect, area: QRect, margin: int = SNAP_PX) -> QPoint:
@@ -55,7 +61,9 @@ class AvatarWindow(QWidget):
         self._skin, self._scale, self._state = skin, scale, "idle"
         self._anim: Animation = skin.animation("idle")
         self._frame = 0
-        self._cache: dict[tuple[str, int, float, bool], QPixmap] = {}
+        self._cache: dict[tuple[str, int, float, bool, bool], QPixmap] = {}
+        self._shown = "idle"  # animation on screen: the agent state, or a short pose (walking / headpat)
+        self._right = False  # skin art faces left; mirror it while moving right
         self._watching = False
         self._press: QPoint | None = None
         self._drag_offset = QPoint()
@@ -71,6 +79,16 @@ class AvatarWindow(QWidget):
         self._wander_timer.timeout.connect(self._wander_step)
         self._wander = False
         self._walk: QPropertyAnimation | None = None
+        self._stroke_x: int | None = None  # headpat: last x, direction and number of direction changes while hovering the head
+        self._stroke_dir = 0
+        self._stroke_n = 0
+        self._stroke_t = QTimer(self)  # no stroking for a moment resets the count
+        self._stroke_t.setSingleShot(True)
+        self._stroke_t.timeout.connect(self._stroke_reset)
+        self._pat_t = QTimer(self)
+        self._pat_t.setSingleShot(True)
+        self._pat_t.timeout.connect(self._end_pat)
+        self.setMouseTracking(True)
         self.setAcceptDrops(True)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.set_always_on_top(always_on_top, show=False)
@@ -116,13 +134,17 @@ class AvatarWindow(QWidget):
     def set_state(self, state: str, force: bool = False) -> None:
         if state == self._state and not force:
             return
-        self._state, self._frame = state, 0
-        self._anim = self._skin.animation(state)
-        self._apply_frame()
-        self._sync_timer()
+        self._state = state
+        self._show(state)
         if state != "idle" and self._walk:
             self._walk.stop()
         self._schedule_wander()
+
+    def _show(self, name: str) -> None:
+        self._shown, self._frame = name, 0
+        self._anim = self._skin.animation(name)
+        self._apply_frame()
+        self._sync_timer()
 
     def _sync_timer(self) -> None:
         if self.isVisible() and len(self._anim.frames) > 1:
@@ -145,11 +167,13 @@ class AvatarWindow(QWidget):
             self._apply_frame()
 
     def _pixmap(self) -> QPixmap:
-        key = (self._state, self._frame, self._scale, self._watching)
+        key = (self._shown, self._frame, self._scale, self._watching, self._right)
         if key not in self._cache:
             src = self._anim.frames[min(self._frame, len(self._anim.frames) - 1)]
             w = max(16, int(self._skin.size * self._scale))
             pm = src.scaled(w, w, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
+            if self._right:
+                pm = pm.transformed(QTransform().scale(-1, 1))
             if self._watching:
                 pm = pm.copy()
                 p = QPainter(pm)
@@ -160,6 +184,11 @@ class AvatarWindow(QWidget):
                 p.end()
             self._cache[key] = pm
         return self._cache[key]
+
+    def _face(self, dx: int) -> None:
+        if dx and (dx > 0) != self._right:
+            self._right = dx > 0
+            self._apply_frame()
 
     def _apply_frame(self) -> None:
         pm = self._pixmap()
@@ -203,22 +232,28 @@ class AvatarWindow(QWidget):
             self._drag_offset = self._press - self.frameGeometry().topLeft()
             self._dragging = False
             if self._walk:
-                self._walk.stop()
+                self._walk.stop()  # stop() does not emit finished
+                self._end_walk()
 
     def mouseMoveEvent(self, e: QMouseEvent) -> None:
         if self._press is None or not (e.buttons() & Qt.MouseButton.LeftButton):
+            if e.buttons() == Qt.MouseButton.NoButton:
+                self._stroke(e.position().toPoint())
             return
         g = e.globalPosition().toPoint()
         if not self._dragging and (g - self._press).manhattanLength() >= DRAG_PX:
             self._dragging = True
             self._click_timer.stop()
         if self._dragging:
-            self.move(g - self._drag_offset)
+            new = g - self._drag_offset
+            self._face(new.x() - self.x())
+            self.move(new)
 
     def mouseReleaseEvent(self, e: QMouseEvent) -> None:
         if e.button() != Qt.MouseButton.LeftButton or self._press is None:
             return
         self._press = None
+        self._schedule_wander()  # press stopped any walk (no `finished` signal) and may have eaten the pending timer
         if self._dragging:
             self._dragging = False
             self.move(snap_to_edges(self.frameGeometry(), self._area()))
@@ -246,6 +281,36 @@ class AvatarWindow(QWidget):
             e.acceptProposedAction()
             self.files_dropped.emit(paths)
 
+    # ---- headpat: stroke the top of the head back and forth with no button pressed ---------------------------------------
+    def _stroke_reset(self) -> None:
+        self._stroke_x, self._stroke_dir, self._stroke_n = None, 0, 0
+
+    def _stroke(self, pos: QPoint) -> None:
+        if self._state not in ("idle", "sleeping") or self._shown == "headpat" or pos.y() > self.height() * PAT_ZONE:
+            return self._stroke_reset()
+        if self._stroke_x is not None and abs(pos.x() - self._stroke_x) >= PAT_MIN_PX:
+            d = 1 if pos.x() > self._stroke_x else -1
+            self._stroke_n += d != self._stroke_dir and self._stroke_dir != 0
+            self._stroke_dir = d
+            self._stroke_x = pos.x()
+            if self._stroke_n >= PAT_STROKES:
+                return self._headpat()
+        elif self._stroke_x is None:
+            self._stroke_x = pos.x()
+        self._stroke_t.start(PAT_IDLE_MS)
+
+    def _headpat(self) -> None:
+        self._stroke_reset()
+        if self._walk:
+            self._walk.stop()
+        self._show("headpat")
+        self._pat_t.start(PAT_MS)
+
+    def _end_pat(self) -> None:
+        if self._shown == "headpat":
+            self._show(self._state)
+        self._schedule_wander()
+
     # ---- optional idle wandering ----------------------------------------------------------------------------------------
     def _schedule_wander(self) -> None:
         self._wander_timer.stop()
@@ -257,12 +322,19 @@ class AvatarWindow(QWidget):
             return
         a = self._area()
         target = QPoint(random.randint(a.left(), max(a.left(), a.right() - self.width())), self.y())
+        self._face(target.x() - self.x())
         self._walk = QPropertyAnimation(self, b"pos", self)
         self._walk.setDuration(max(800, abs(target.x() - self.x()) * 8))
         self._walk.setEndValue(target)
         self._walk.setEasingCurve(QEasingCurve.Type.InOutQuad)
-        self._walk.finished.connect(self._schedule_wander)
+        self._walk.finished.connect(self._end_walk)
+        self._show("walking")
         self._walk.start()
+
+    def _end_walk(self) -> None:
+        if self._shown == "walking":
+            self._show(self._state)
+        self._schedule_wander()
 
 
 class SpeechBubble(QWidget):

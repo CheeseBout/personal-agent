@@ -10,7 +10,7 @@ import time
 from collections.abc import Callable
 from typing import Any
 
-STATES = ("idle", "listening", "thinking", "working", "speaking", "awaiting_approval", "success", "error", "sleeping")
+STATES = ("idle", "listening", "thinking", "working", "speaking", "awaiting_approval", "success", "error", "sleeping", "walking", "headpat")  # last two are shown by the avatar itself, never by AvatarState
 FLASH_S = {"success": 2.5, "error": 4.0}  # how long a one-shot result stays on screen
 WORKING_EVENTS = {"tool_call", "tool_result", "worker"}
 THINKING_EVENTS = {"intent", "plan", "verdict"}

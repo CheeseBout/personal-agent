@@ -416,3 +416,26 @@ def test_chat_quit_button_and_shortcut_emit_quit_requested(qapp: QApplication) -
     w.quit_btn.click()
     w.findChildren(QShortcut)[0].activated.emit()  # offscreen windows are never active, so keyClick cannot trigger it
     assert got == [1, 1]
+
+
+def test_chat_attachment_can_be_removed_with_x(qapp: QApplication) -> None:
+    w = ChatWindow(Session("t", "Mimi"))
+    w._files = [{"name": "a.png", "data": "AA"}, {"name": "b<i>.png", "data": "AA"}]
+    w.refresh({"busy"})
+    assert w.chips.text().count("✕") == 2 and "b&lt;i&gt;.png" in w.chips.text()
+    w._remove_file("rm:0")
+    assert [f["name"] for f in w._files] == ["b<i>.png"]
+    w._remove_file("rm:0")
+    assert w._files == [] and w.chips.text() == ""
+
+
+def test_quick_input_closes_itself_when_nothing_is_typed(qapp: QApplication) -> None:
+    a = AvatarWindow(Skin.default())
+    a.show()
+    q = QuickInput()
+    q.open_at(a)
+    assert q._idle.isActive() and q._idle.interval() == 5000
+    q.edit.setPlainText("x")
+    assert not q._idle.isActive()
+    q._idle.timeout.emit()
+    assert not q.isVisible()

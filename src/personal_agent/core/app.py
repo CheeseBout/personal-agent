@@ -344,7 +344,7 @@ def create_app(brain: Brain | None = None, db_path: Path | None = None, token: s
             return status
         if isinstance(msg.get("ui_pid"), int):
             windows.register_own_pid(msg["ui_pid"])  # the agent may never operate the UI's windows (it could approve itself)
-        return {"type": "about", "pid": os.getpid()}
+        return {"type": "about", "pid": os.getpid(), "killed": app.state.kill.engaged}
 
     async def handle(msg: Any, send: Send) -> None:
         s = app.state

@@ -95,6 +95,7 @@ class UiApp:
         c.disconnected.connect(self.on_disconnected)
         self.chat.submitted.connect(self.send_user)
         self.chat.stop_requested.connect(self.kill)
+        self.chat.resume_requested.connect(lambda: self.client.send({"type": "release_kill"}))
         self.chat.quit_requested.connect(self.quit)
         self.chat.record_toggled.connect(lambda on: self.start_recording("chat") if on else self.recorder.stop())
         self.quick.submitted.connect(self.send_user)
@@ -201,6 +202,8 @@ class UiApp:
                 self.wizard.on_test_result(ev)
         elif t == "about":
             self.daemon_pid = ev.get("pid")
+            if ev.get("killed") and not self.session.killed:  # the daemon was paused before this UI connected
+                self.chat.refresh(self.session.apply({"type": "killed", "threads": 0}))
         elif t == "transcript":
             self.on_transcript(str(ev.get("text", "")))
         elif t == "final":
