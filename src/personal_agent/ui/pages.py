@@ -10,6 +10,7 @@ from typing import Any
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import (
     QComboBox,
+    QFileDialog,
     QHBoxLayout,
     QHeaderView,
     QInputDialog,
@@ -26,6 +27,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from personal_agent.rag.loaders import SUPPORTED
 from personal_agent.ui.i18n import tr
 
 Send = Callable[[dict[str, Any]], Any]
@@ -68,6 +70,28 @@ def delete_memory_action(row: Row) -> Row | None:
     if not _confirm(("Delete memory", "Xóa bộ nhớ"), ("Delete this memory permanently?\n\n" + snippet, "Xóa vĩnh viễn mục này?\n\n" + snippet)):
         return None
     return {"type": "memory_delete", "id": row["id"]}
+
+
+def remove_doc_action(row: Row) -> Row | None:
+    if not _confirm(("Remove from index", "Xóa khỏi chỉ mục"), (
+            f"Remove this document from the index?\nThe file itself is not deleted.\n\n{row['source']}",
+            f"Xóa tài liệu này khỏi chỉ mục?\nTệp gốc không bị xóa.\n\n{row['source']}")):
+        return None
+    return {"type": "rag_remove", "source": row["source"]}
+
+
+def rag_summary(report: list[str]) -> str:
+    """One short line for a sync / add report: how many files were indexed, unchanged, removed or failed."""
+    if not report:
+        return tr("No supported files found.", "Không tìm thấy tệp được hỗ trợ.")
+    n = {k: sum(1 for ln in report if ln.startswith(k)) for k in ("ingested", "updated", "unchanged", "removed", "failed")}
+    done = n["ingested"] + n["updated"]
+    out = ", ".join([tr(f"{done} indexed", f"{done} đã lập chỉ mục"), tr(f"{n['unchanged']} unchanged", f"{n['unchanged']} không đổi"),
+                     tr(f"{n['removed']} removed", f"{n['removed']} đã gỡ")])
+    if n["failed"]:
+        first = next(ln for ln in report if ln.startswith("failed"))
+        out = f"⚠ {tr(str(n['failed']) + ' failed', str(n['failed']) + ' lỗi')} ({first[:80]}); {out}"
+    return out
 
 
 _rids = itertools.count(1)  # request ids: the daemon echoes them, so replies can be matched and stale ones dropped
@@ -237,6 +261,151 @@ class TablePage(QWidget):
         self._show_empty()
 
 
+class DocumentsPage(TablePage):
+    """Indexed documents (RAG): add a file or folder, remove an entry, sync the watched folders, pause / resume watching, and try a search.
+    Indexing jobs run on the daemon and can take a while, so their buttons stay locked until the daemon answers."""
+
+    JOB_LIMIT_MS = 600_000  # unlock anyway if the daemon never answers (e.g. the connection dropped)
+
+    def __init__(self, send: Send) -> None:
+        self._job: int | None = None  # request id of the running add / sync
+        self._search_rid: int | None = None
+        self.watching = self.paused = False
+        super().__init__(send, {"type": "rag_list"}, "rag", lambda e: e["items"],
+                         [("Source", "Nguồn", lambda r: r["source"]), ("Type", "Loại", lambda r: r["kind"]),
+                          ("Chunks", "Đoạn", lambda r: r["chunks"]), ("Updated", "Cập nhật", lambda r: _ts(r.get("updated")))],
+                         [("Remove from index", "Xóa khỏi chỉ mục", remove_doc_action)], wide=0, searchable=True,
+                         facet=("Type", "Loại", lambda r: r["kind"]),
+                         empty=("No documents indexed yet. Use Add file / Add folder, or list folders under rag.watch in the config.",
+                                "Chưa có tài liệu nào. Dùng Thêm tệp / Thêm thư mục, hoặc khai báo thư mục trong rag.watch ở cấu hình."))
+        lay: QVBoxLayout = self.layout()  # type: ignore[assignment]
+        row = QHBoxLayout()
+        self.add_file, self.add_folder, self.sync_btn, self.pause_btn = QPushButton(), QPushButton(), QPushButton(), QPushButton()
+        self.add_file.clicked.connect(self._pick_file)
+        self.add_folder.clicked.connect(self._pick_folder)
+        self.sync_btn.clicked.connect(self._sync)
+        self.pause_btn.clicked.connect(lambda: self._send({"type": "rag_resume" if self.paused else "rag_pause"}))
+        for b in (self.add_file, self.add_folder, self.sync_btn, self.pause_btn):
+            row.addWidget(b)
+        self.state = QLabel()
+        row.addWidget(self.state, 1)
+        lay.insertLayout(1, row)
+        srow = QHBoxLayout()
+        self.query = QLineEdit()
+        self.query.returnPressed.connect(self._search)
+        self.search_btn = QPushButton()
+        self.search_btn.clicked.connect(self._search)
+        srow.addWidget(self.query, 1)
+        srow.addWidget(self.search_btn)
+        lay.addLayout(srow)
+        self.output = QPlainTextEdit()
+        self.output.setReadOnly(True)
+        self.output.setMaximumHeight(130)
+        lay.addWidget(self.output)
+        self.retranslate()
+
+    def retranslate(self) -> None:
+        super().retranslate()
+        if not hasattr(self, "output"):  # called by TablePage.__init__ before our widgets exist
+            return
+        self.add_file.setText(tr("Add file…", "Thêm tệp…"))
+        self.add_folder.setText(tr("Add folder…", "Thêm thư mục…"))
+        self.sync_btn.setText(tr("Sync folders", "Đồng bộ thư mục"))
+        self.search_btn.setText(tr("Search", "Tìm"))
+        self.query.setPlaceholderText(tr("Try a question against the indexed documents…", "Thử hỏi trên các tài liệu đã lập chỉ mục…"))
+        self.output.setPlaceholderText(tr("Search results and sync reports appear here.", "Kết quả tìm kiếm và báo cáo đồng bộ hiện ở đây."))
+        for w, en, vi in ((self.add_file, "Index one file (md, docx, pdf, txt)", "Lập chỉ mục một tệp (md, docx, pdf, txt)"),
+                          (self.add_folder, "Index every supported file in a folder", "Lập chỉ mục mọi tệp được hỗ trợ trong thư mục"),
+                          (self.sync_btn, "Re-scan the watched folders; entries for deleted files are removed", "Quét lại thư mục theo dõi; mục của tệp đã xóa sẽ bị gỡ"),
+                          (self.pause_btn, "Pause or resume automatic indexing of the watched folders", "Tạm dừng hoặc tiếp tục tự động lập chỉ mục thư mục theo dõi"),
+                          (self.query, "Search the indexed documents", "Tìm trong tài liệu đã lập chỉ mục"),
+                          (self.output, "Search results and sync reports", "Kết quả tìm kiếm và báo cáo đồng bộ")):
+            w.setToolTip(tr(en, vi))
+            w.setAccessibleName(tr(en, vi))
+        self._sync_state()
+
+    def _sync_state(self) -> None:
+        busy = self._job is not None
+        self.add_file.setEnabled(not busy)
+        self.add_folder.setEnabled(not busy)
+        self.sync_btn.setEnabled(not busy and self.watching)
+        self.pause_btn.setEnabled(self.watching)
+        self.pause_btn.setText(tr("Resume watching", "Tiếp tục theo dõi") if self.paused else tr("Pause watching", "Tạm dừng theo dõi"))
+        self.search_btn.setEnabled(self._search_rid is None)
+        self.state.setText(tr("Indexing… this can take a while.", "Đang lập chỉ mục… có thể mất một lúc.") if busy else
+                           tr("Watching folders: paused.", "Theo dõi thư mục: đang tạm dừng.") if self.watching and self.paused else
+                           tr("Watching folders: on.", "Theo dõi thư mục: đang bật.") if self.watching else
+                           tr("No watched folders (set rag.watch in the config).", "Chưa theo dõi thư mục nào (đặt rag.watch trong cấu hình)."))
+
+    def load(self, ev: Row) -> bool:
+        ok = super().load(ev)
+        if ok:
+            self.watching, self.paused = bool(ev.get("watching")), bool(ev.get("paused"))
+            self._sync_state()
+        return ok
+
+    def _start(self, msg: Row) -> None:
+        rid = self._job = next(_rids)
+        self._sync_state()
+        self.note(tr("Indexing…", "Đang lập chỉ mục…"))
+        QTimer.singleShot(self.JOB_LIMIT_MS, lambda: self.finish(rid))
+        self._send({**msg, "rid": rid})
+
+    def _pick_file(self) -> None:
+        exts = " ".join(f"*{e}" for e in sorted(SUPPORTED))
+        path, _ = QFileDialog.getOpenFileName(self, tr("Add file", "Thêm tệp"), "", f"{tr('Documents', 'Tài liệu')} ({exts})")
+        if path:
+            self._start({"type": "rag_add", "path": path})
+
+    def _pick_folder(self) -> None:
+        path = QFileDialog.getExistingDirectory(self, tr("Add folder", "Thêm thư mục"))
+        if path:
+            self._start({"type": "rag_add", "path": path})
+
+    def _sync(self) -> None:
+        if _confirm(("Sync folders", "Đồng bộ thư mục"), (
+                "Re-scan the watched folders? New and changed files are indexed, and entries for files that no longer exist are removed from the index.",
+                "Quét lại các thư mục theo dõi? Tệp mới và tệp đã đổi sẽ được lập chỉ mục; mục của tệp không còn tồn tại sẽ bị gỡ khỏi chỉ mục.")):
+            self._start({"type": "rag_sync"})
+
+    def _search(self) -> None:
+        if (q := self.query.text().strip()) and self._search_rid is None:
+            self._search_rid = rid = next(_rids)
+            self.output.setPlainText(tr("Searching…", "Đang tìm…"))
+            self._sync_state()
+            QTimer.singleShot(REPLY_TIMEOUT_MS * 4, lambda: self.finish(rid))
+            self._send({"type": "rag_search", "query": q, "rid": rid})
+
+    def finish(self, rid: Any) -> bool:
+        """The daemon answered (or refused) request `rid`: unlock. True if it was one of ours."""
+        hit = False
+        if rid is not None and rid == self._job:
+            self._job, hit = None, True
+        if rid is not None and rid == self._search_rid:
+            self._search_rid, hit = None, True
+        if hit:
+            self._sync_state()
+        return hit
+
+    def settle(self, rid: Any) -> bool:
+        if rid is not None and rid == self._search_rid:
+            self.output.clear()
+        return self.finish(rid) or super().settle(rid)
+
+    def show_report(self, ev: Row) -> None:
+        self.finish(ev.get("rid"))
+        if report := ev.get("report"):
+            self.output.setPlainText("\n".join(map(str, report)))
+
+    def show_results(self, ev: Row) -> None:
+        if not self.finish(ev.get("rid")):
+            return  # a reply to a search that was superseded or timed out
+        hits = ev.get("hits") or []
+        body = "\n\n".join(f"[{i}] {h['cite']}  ({h['score']})\n{h['text']}" for i, h in enumerate(hits, 1))
+        head = (str(ev["note"]) + "\n\n") if ev.get("note") else ""
+        self.output.setPlainText(head + (body or tr("No matching passages.", "Không có đoạn nào phù hợp.")))
+
+
 class UsagePage(QWidget):
     def __init__(self, send: Send) -> None:
         super().__init__()
@@ -353,10 +522,7 @@ class ManagerWindow(QTabWidget):
                 [("Edit", "Sửa", edit_memory_action), ("Approve", "Duyệt", approve_memory_action), ("Delete", "Xóa", delete_memory_action)],
                 wide=3, searchable=True, facet=("Status", "Trạng thái", lambda r: r["status"]),
                 empty=("No memories yet. The agent saves them as you chat.", "Chưa có bộ nhớ nào. Agent sẽ lưu khi bạn trò chuyện."))
-        rag = P(send, {"type": "rag_list"}, "rag", lambda e: e["items"],
-                [("Source", "Nguồn", lambda r: r["source"]), ("Type", "Loại", lambda r: r["kind"]), ("Chunks", "Đoạn", lambda r: r["chunks"])],
-                toolbar=[("Pause watching", "Tạm dừng theo dõi", {"type": "rag_pause"}), ("Resume", "Tiếp tục", {"type": "rag_resume"}),
-                         ("Sync folders", "Đồng bộ thư mục", {"type": "rag_sync"})])
+        rag = DocumentsPage(send)
         mcp = P(send, {"type": "mcp_list"}, "mcp", lambda e: [{"name": n, **v} for n, v in e["servers"].items()],
                 [("Server", "Máy chủ", lambda r: r["name"]), ("Enabled", "Bật", lambda r: r.get("enabled", "")), ("Status", "Trạng thái", lambda r: r.get("status", ""))],
                 [("Enable", "Bật", lambda r: {"type": "mcp_set", "name": r["name"], "enabled": True}),
@@ -385,7 +551,7 @@ class ManagerWindow(QTabWidget):
         # (event type) -> page key; mutations re-request the list they changed
         self._route = {"memory": "memory", "rag": "rag", "mcp": "mcp", "schedules": "schedules", "rules": "rules", "audit": "audit",
                        "usage": "usage", "policy": "policy"}
-        self._after = {"memory_updated": "memory", "memory_deleted": "memory", "mcp_set": "mcp", "schedule_cancel": "schedules", "rag_synced": "rag"}
+        self._after = {"memory_updated": "memory", "memory_deleted": "memory", "mcp_set": "mcp", "schedule_cancel": "schedules", "rag_synced": "rag", "rag_added": "rag", "rag_removed": "rag"}
         self._note = ""  # shown once, after the list that follows a change has loaded
         self.status.setAlignment(Qt.AlignmentFlag.AlignRight)
         for w, _en, _vi in self._tabs:
@@ -424,6 +590,13 @@ class ManagerWindow(QTabWidget):
             if ev.get("status") == "proposed":
                 return tr("Saved. It looks sensitive, so it is waiting for your approval.", "Đã lưu. Nội dung có vẻ nhạy cảm nên đang chờ bạn duyệt.")
             return tr("Saved.", "Đã lưu.")
+        if t == "rag_removed":
+            return tr("Removed from the index (the file is untouched).", "Đã xóa khỏi chỉ mục (tệp gốc giữ nguyên).") if ev.get("chunks") \
+                else tr("That document was already gone from the index.", "Tài liệu này không còn trong chỉ mục.")
+        if t in ("rag_synced", "rag_added"):
+            if t == "rag_synced" and not ev.get("folders"):
+                return "⚠ " + tr("No watched folder is available to sync.", "Không có thư mục theo dõi nào để đồng bộ.")
+            return rag_summary(ev.get("report") or [])
         return ""
 
     def on_event(self, ev: Row) -> bool:
@@ -434,8 +607,15 @@ class ManagerWindow(QTabWidget):
                 self.status.setText(self._note)
                 self._note = ""
             return True
+        if t == "rag_results":
+            self.pages["rag"][0].show_results(ev)  # type: ignore[attr-defined]
+            return True
         if t in self._after:
             self._note = self._result_note(ev)
+            if t in ("rag_synced", "rag_added"):
+                self.pages["rag"][0].show_report(ev)  # type: ignore[attr-defined]
+            elif t == "rag_removed":
+                self.pages["rag"][0].finish(ev.get("rid"))  # type: ignore[attr-defined]
             self.pages[self._after[t]][0].refresh()  # type: ignore[attr-defined]
             return True
         if t == "error":

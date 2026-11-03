@@ -46,6 +46,7 @@ from personal_agent.perception import hooks, windows
 from personal_agent.perception.watch import ScreenWatcher
 from personal_agent.policy.approvals import ApprovalStore
 from personal_agent.policy.killswitch import KillSwitch
+from personal_agent.rag.embed import EmbeddingUnavailable
 from personal_agent.rag.loaders import UnsupportedDocument
 from personal_agent.rag.watch import FolderWatcher
 from personal_agent.settings.secrets import get_api_token
@@ -247,7 +248,7 @@ def create_app(brain: Brain | None = None, db_path: Path | None = None, token: s
             if not app.state.clients:  # nobody left to see the 'watching' badge: never keep watching the screen unseen
                 app.state.screen.stop("no UI connected")
 
-    MANAGE = {"memory_list", "memory_update", "memory_delete", "rag_list", "rag_pause", "rag_resume", "rag_sync",
+    MANAGE = {"memory_list", "memory_update", "memory_delete", "rag_list", "rag_pause", "rag_resume", "rag_sync", "rag_add", "rag_remove", "rag_search",
               "mcp_list", "mcp_set", "mcp_reload", "schedules", "schedule_cancel"}
 
     async def manage(kind: str, msg: dict[str, Any]) -> dict[str, Any]:
@@ -271,12 +272,39 @@ def create_app(brain: Brain | None = None, db_path: Path | None = None, token: s
                 s.watcher.paused = kind == "rag_pause"
             return {"type": "rag", "items": rag.documents(), "watching": bool(s.watcher), "paused": bool(s.watcher and s.watcher.paused)}
         if kind == "rag_sync":
-            folders = [Path(os.path.expandvars(f)) for f in settings.rag.watch]
+            folders = sorted({Path(os.path.expandvars(f)) for f in settings.rag.watch})
+            roots = [f for f in folders if not any(o != f and f.is_relative_to(o) for o in folders)]  # a nested folder is covered by its parent: syncing both would prune twice
             lines: list[str] = []
-            for f in folders:
+            for f in roots:
                 if policy().check_path(f).allowed and f.is_dir():
                     lines += await asyncio.to_thread(rag.sync_folder, f, lambda p: policy().check_path(p).allowed)
-            return {"type": "rag_synced", "report": lines}
+            return {"type": "rag_synced", "report": lines, "folders": len(roots)}
+        if kind == "rag_add":  # a file or folder chosen in the UI; same policy check as the agent's rag_ingest
+            p = Path(os.path.expandvars(str(msg["path"]))).expanduser()
+            if not p.is_absolute():
+                raise ValueError("an absolute path is required")
+            if not (d := policy().check_path(p)).allowed:
+                raise ValueError(f"access denied: {d.reason}")
+            try:
+                if p.is_dir():
+                    lines = await asyncio.to_thread(rag.sync_folder, p, lambda f: policy().check_path(f).allowed)
+                elif p.is_file():
+                    lines = [await asyncio.to_thread(rag.ingest, p)]
+                else:
+                    raise ValueError("not found")
+            except EmbeddingUnavailable as e:
+                raise ValueError(f"embeddings unavailable, nothing was indexed: {e}") from e
+            except OSError as e:
+                raise ValueError(f"cannot read file: {e.strerror or type(e).__name__}") from e
+            return {"type": "rag_added", "report": lines}
+        if kind == "rag_remove":  # the index entry only; the file is untouched
+            return {"type": "rag_removed", "chunks": await asyncio.to_thread(rag.remove, str(msg["source"]))}
+        if kind == "rag_search":
+            q = str(msg["query"]).strip()
+            if not q:
+                raise ValueError("type something to search for")
+            hits, note = await asyncio.to_thread(rag.search, q[:500], 5, None)
+            return {"type": "rag_results", "note": note, "hits": [{"cite": h.cite, "text": h.text[:1200], "score": round(h.score, 3)} for h in hits]}
         if kind == "mcp_list":
             return {"type": "mcp", "servers": {n: {"enabled": sp.get("enabled", True), "status": s.mcp_status.get(n, "not loaded")}
                                                for n, sp in mcp_client.read_config()["servers"].items()}}

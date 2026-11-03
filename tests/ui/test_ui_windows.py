@@ -576,3 +576,35 @@ def test_quick_input_closes_itself_when_nothing_is_typed(qapp: QApplication) -> 
     assert not q._idle.isActive()
     q._idle.timeout.emit()
     assert not q.isVisible()
+
+
+def test_documents_page_state_jobs_and_reports(qapp: QApplication, monkeypatch: Any) -> None:
+    asked = confirm(monkeypatch)
+    sent: list[dict[str, Any]] = []
+    m = ManagerWindow(sent.append)
+    page = m.pages["rag"][0]
+    m.on_event({"type": "rag", "items": [{"source": "C:/d/a.md", "kind": "md", "chunks": 3, "updated": 1.0}], "watching": False, "paused": False})
+    assert page.table.rowCount() == 1 and not page.sync_btn.isEnabled() and not page.pause_btn.isEnabled()  # nothing watched
+    m.on_event({"type": "rag", "items": page.rows, "watching": True, "paused": True})
+    assert page.sync_btn.isEnabled() and "Resume" in page.pause_btn.text() or "Tiếp" in page.pause_btn.text()
+    page.pause_btn.click()
+    assert sent[-1] == {"type": "rag_resume"}
+    page.sync_btn.click()
+    assert asked and sent[-1]["type"] == "rag_sync" and not page.add_file.isEnabled()  # confirmed, and locked while indexing
+    rid = sent[-1]["rid"]
+    m.on_event({"type": "rag_synced", "rid": rid, "folders": 1, "report": ["ingested: a.md (3 chunks)", "failed: b.pdf: boom"]})
+    assert page.add_file.isEnabled() and "b.pdf" in page.output.toPlainText() and "⚠" in m._note
+    m.on_event({"type": "rag_synced", "rid": 0, "folders": 0, "report": []})
+    assert "⚠" in m._note
+    row_btns_rag = page.table.cellWidget(0, 4).findChildren(QPushButton)
+    row_btns_rag[0].click()
+    assert "not deleted" in asked[-1] or "không bị xóa" in asked[-1]
+    assert sent[-1] == {"type": "rag_remove", "source": "C:/d/a.md", "rid": sent[-1]["rid"]}
+    page.query.setText("tea")
+    page.search_btn.click()
+    srid = sent[-1]["rid"]
+    m.on_event({"type": "rag_results", "rid": srid, "note": "", "hits": [{"cite": "a.md", "text": "green", "score": 0.9}]})
+    assert "a.md" in page.output.toPlainText() and page.search_btn.isEnabled()
+    page.search_btn.click()
+    m.on_event({"type": "error", "rid": sent[-1]["rid"], "message": "x"})
+    assert page.search_btn.isEnabled()  # a refused search unlocks the button

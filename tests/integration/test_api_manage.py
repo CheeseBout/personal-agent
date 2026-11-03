@@ -10,7 +10,7 @@ from fakes import FakeBrain, ScriptedModel, answer, call
 from personal_agent import services
 from personal_agent.settings.settings import data_dir
 
-DONE = {"memory", "memory_updated", "memory_deleted", "rag", "rag_synced", "mcp", "mcp_set", "schedules", "schedule_cancel",
+DONE = {"memory", "memory_updated", "memory_deleted", "rag", "rag_synced", "rag_added", "rag_removed", "rag_results", "mcp", "mcp_set", "schedules", "schedule_cancel",
         "error", "approvals", "final", "paused", "schedule_run", "killed", "kill_released"}
 
 
@@ -62,6 +62,24 @@ def test_rag_page_lists_documents_and_reports_no_watcher(env: Path, tmp_path: Pa
         r = ask(ws, {"type": "rag_list"})
         assert [Path(d["source"]).name for d in r["items"]] == ["doc.md"] and r["watching"] is False
         assert ask(ws, {"type": "rag_pause"})["paused"] is False  # nothing is watched, so nothing to pause
+
+
+def test_rag_page_add_search_remove_and_sync_without_folders(env: Path, tmp_path: Path) -> None:
+    doc = env / "note.md"
+    doc.write_text("# Tea\nGreen tea is brewed at 80 degrees.", encoding="utf-8")
+    with app_client(tmp_path, answer("x")) as c:
+        ws = connect(c)
+        added = ask(ws, {"type": "rag_add", "path": str(doc), "rid": 7})
+        assert added["type"] == "rag_added" and added["rid"] == 7 and added["report"][0].startswith("ingested")
+        assert ask(ws, {"type": "rag_add", "path": "relative.md"})["type"] == "error"  # only absolute paths
+        assert ask(ws, {"type": "rag_add", "path": str(tmp_path / "outside.md")})["type"] == "error"  # outside the allowed paths
+        found = ask(ws, {"type": "rag_search", "query": "green tea"})
+        assert found["type"] == "rag_results" and "note.md" in found["hits"][0]["cite"]
+        assert ask(ws, {"type": "rag_search", "query": "  "})["type"] == "error"
+        assert ask(ws, {"type": "rag_sync"}) == {"type": "rag_synced", "report": [], "folders": 0}
+        removed = ask(ws, {"type": "rag_remove", "source": str(doc)})
+        assert removed["type"] == "rag_removed" and removed["chunks"] > 0 and doc.exists()
+        assert ask(ws, {"type": "rag_remove", "source": str(doc)})["chunks"] == 0
 
 
 def test_rag_watch_folders_must_be_inside_the_allowed_paths(env: Path, tmp_path: Path, monkeypatch: Any) -> None:

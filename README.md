@@ -27,7 +27,6 @@ Requirements: Windows 10/11, Python 3.12+.
 | [docs/development.md](docs/development.md) | setup, tests and evals, packaging, how to add a tool / MCP server / provider / skin, conventions, known gaps |
 | [docs/decisions.md](docs/decisions.md) | design decisions and the measured resource targets |
 
-`PROMPT.md` is the original specification.
 
 ## Development
 ```powershell
