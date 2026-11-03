@@ -6,11 +6,13 @@ import time
 from collections.abc import Callable
 from typing import Any
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import (
     QHBoxLayout,
     QHeaderView,
+    QInputDialog,
     QLabel,
+    QMessageBox,
     QPlainTextEdit,
     QProgressBar,
     QPushButton,
@@ -32,16 +34,30 @@ def _ts(v: Any) -> str:
     return time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(float(v))) if v else ""
 
 
+def edit_memory_action(row: Row) -> Row | None:
+    """Ask for the new text of a memory; None (send nothing) when cancelled or unchanged. The daemon re-checks length and sensitivity."""
+    text, ok = QInputDialog.getMultiLineText(None, tr("Edit memory", "Sửa bộ nhớ"), tr("Text", "Nội dung"), str(row["text"]))
+    text = text.strip()
+    if not ok or not text or text == row["text"]:
+        return None
+    if len(text) > 2000:
+        QMessageBox.warning(None, tr("Edit memory", "Sửa bộ nhớ"), tr("At most 2000 characters.", "Tối đa 2000 ký tự."))
+        return None
+    return {"type": "memory_update", "id": row["id"], "text": text}
+
+
 class TablePage(QWidget):
     """A list the daemon sends as one event, with a button per row action and optional toolbar buttons."""
 
     def __init__(self, send: Send, request: Row, event: str, rows_of: Callable[[Row], list[Row]], columns: list[Column],
-                 actions: list[tuple[str, str, Callable[[Row], Row]]] | None = None,
+                 actions: list[tuple[str, str, Callable[[Row], Row | None]]] | None = None,
                  toolbar: list[tuple[str, str, Row]] | None = None) -> None:
         super().__init__()
         self._send, self.request, self.event_type, self._rows_of, self._cols = send, request, event, rows_of, columns
         self._actions = actions or []
         self.rows: list[Row] = []
+        self._gen = 0  # bumped on every rebuild; a late undo of a stale row must not touch the new widgets
+        self._undos: list[Callable[[], None]] = []
         lay = QVBoxLayout(self)
         bar = QHBoxLayout()
         self.refresh_btn = QPushButton()
@@ -73,7 +89,32 @@ class TablePage(QWidget):
     def refresh(self) -> None:
         self._send(self.request)
 
+    def unstick(self) -> None:
+        """Give the buttons of rows that are still waiting for the daemon back (error, timeout)."""
+        undos, self._undos = self._undos, []
+        for u in undos:
+            u()
+
+    def _act(self, row: Row, make: Callable[[Row], Row | None], btn: QPushButton, box: QWidget) -> None:
+        if not (msg := make(row)):
+            return
+        btns, label, gen = box.findChildren(QPushButton), btn.text(), self._gen
+        for b in btns:
+            b.setEnabled(False)
+        btn.setText(tr("Working…", "Đang xử lý…"))
+
+        def undo() -> None:
+            if gen == self._gen:
+                btn.setText(label)
+                for b in btns:
+                    b.setEnabled(True)
+        self._undos.append(undo)
+        QTimer.singleShot(10_000, undo)
+        self._send(msg)
+
     def load(self, ev: Row) -> None:
+        self._gen += 1
+        self._undos.clear()
         self.rows = self._rows_of(ev)
         self.table.setRowCount(len(self.rows))
         for r, row in enumerate(self.rows):
@@ -87,7 +128,7 @@ class TablePage(QWidget):
                 h.setContentsMargins(2, 0, 2, 0)
                 for en, vi, make in self._actions:
                     b = QPushButton(tr(en, vi))
-                    b.clicked.connect(lambda _=False, row=row, make=make: self._send(make(row)))
+                    b.clicked.connect(lambda _=False, row=row, make=make, b=b, box=box: self._act(row, make, b, box))
                     h.addWidget(b)
                 self.table.setCellWidget(r, len(self._cols), box)
 
@@ -205,7 +246,8 @@ class ManagerWindow(QTabWidget):
         mem = P(send, {"type": "memory_list"}, "memory", lambda e: e["items"],
                 [("ID", "ID", lambda r: r["id"]), ("Kind", "Loại", lambda r: r["kind"]), ("Status", "Trạng thái",
                  lambda r: r["status"] + (" ⚠" if r.get("sensitive") else "")), ("Text", "Nội dung", lambda r: r["text"])],
-                [("Approve", "Duyệt", lambda r: {"type": "memory_update", "id": r["id"], "status": "active"}),
+                [("Edit", "Sửa", edit_memory_action),
+                 ("Approve", "Duyệt", lambda r: {"type": "memory_update", "id": r["id"], "status": "active"}),
                  ("Delete", "Xóa", lambda r: {"type": "memory_delete", "id": r["id"]})])
         rag = P(send, {"type": "rag_list"}, "rag", lambda e: e["items"],
                 [("Source", "Nguồn", lambda r: r["source"]), ("Type", "Loại", lambda r: r["kind"]), ("Chunks", "Đoạn", lambda r: r["chunks"])],
@@ -274,6 +316,10 @@ class ManagerWindow(QTabWidget):
             w = self.pages[self._after[t]][0]
             w.refresh()  # type: ignore[attr-defined]
             return True
+        if t == "error":
+            for w, _ in self.pages.values():
+                if isinstance(w, TablePage):
+                    w.unstick()
         if t == "error" and self.isVisible():
             self.status.setText(f"⚠ {ev.get('message', '')}")
             self.status.setAlignment(Qt.AlignmentFlag.AlignRight)

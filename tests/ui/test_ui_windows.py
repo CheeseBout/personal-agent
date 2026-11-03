@@ -10,7 +10,7 @@ import pytest
 from PySide6.QtCore import QMimeData, QPoint, QPointF, Qt, QUrl
 from PySide6.QtGui import QColor, QDropEvent, QImage, QPixmap, QShortcut
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QApplication, QPushButton
+from PySide6.QtWidgets import QApplication, QInputDialog, QMessageBox, QPushButton
 
 from conftest import pump
 from personal_agent.ui.approvals import ApprovalCenter, ThreadBox
@@ -310,8 +310,9 @@ def test_manager_pages_fill_from_events_and_send_row_actions(qapp: QApplication)
     page = m.pages["memory"][0]
     assert page.table.rowCount() == 1 and page.table.item(0, 2).text().endswith("⚠")
     buttons = page.table.cellWidget(0, 4).findChildren(QPushButton)
-    buttons[0].click()
     buttons[1].click()
+    m.on_event({"type": "memory", "items": m.pages["memory"][0].rows})  # a finished action rebuilds the row
+    page.table.cellWidget(0, 4).findChildren(QPushButton)[2].click()
     assert sent == [{"type": "memory_update", "id": 4, "status": "active"}, {"type": "memory_delete", "id": 4}]
     sent.clear()
     m.on_event({"type": "memory_deleted", "ok": True})  # a change re-requests the list
@@ -329,6 +330,35 @@ def test_manager_pages_fill_from_events_and_send_row_actions(qapp: QApplication)
     sent.clear()
     m.policy.save_btn.click()
     assert sent[0]["type"] == "policy_set" and sent[0]["text"].startswith("default_tier")
+
+
+def test_row_action_shows_working_until_the_list_comes_back_or_an_error(qapp: QApplication) -> None:
+    sent: list[dict[str, Any]] = []
+    m = ManagerWindow(sent.append)
+    items = [{"id": 4, "kind": "fact", "status": "active", "text": "a"}, {"id": 5, "kind": "fact", "status": "active", "text": "b"}]
+    m.on_event({"type": "memory", "items": items})
+    page = m.pages["memory"][0]
+    btns = page.table.cellWidget(0, 4).findChildren(QPushButton)
+    btns[2].click()
+    assert sent == [{"type": "memory_delete", "id": 4}] and not any(b.isEnabled() for b in btns) and btns[2].text() == "Working…"
+    assert all(b.isEnabled() for b in page.table.cellWidget(1, 4).findChildren(QPushButton))  # other rows stay usable
+    m.on_event({"type": "error", "message": "boom"})  # the daemon refused: the buttons come back
+    assert all(b.isEnabled() for b in btns) and btns[2].text() == "Delete"
+    btns[2].click()
+    m.on_event({"type": "memory", "items": items[1:]})  # the new list rebuilds the table
+    assert page.table.rowCount() == 1 and page.table.cellWidget(0, 4).findChildren(QPushButton)[2].isEnabled()
+
+
+def test_memory_edit_sends_the_new_text_and_ignores_cancel_or_no_change(qapp: QApplication, monkeypatch: Any) -> None:
+    sent: list[dict[str, Any]] = []
+    m = ManagerWindow(sent.append)
+    m.on_event({"type": "memory", "items": [{"id": 4, "kind": "fact", "status": "active", "text": "likes tea"}]})
+    edit = m.pages["memory"][0].table.cellWidget(0, 4).findChildren(QPushButton)[0]
+    for answer in ((" likes green tea ", True), ("likes tea", True), ("other", False), ("   ", True), ("x" * 2001, True)):
+        monkeypatch.setattr(QInputDialog, "getMultiLineText", lambda *_a, answer=answer: answer)
+        monkeypatch.setattr(QMessageBox, "warning", lambda *_a: None)
+        edit.click()
+    assert sent == [{"type": "memory_update", "id": 4, "text": "likes green tea"}]
 
 
 def test_language_switch_retranslates_the_manager(qapp: QApplication) -> None:
