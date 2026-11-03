@@ -9,6 +9,7 @@ import base64
 import os
 import sys
 import tempfile
+from functools import partial
 from pathlib import Path
 from typing import Any
 
@@ -27,6 +28,7 @@ from personal_agent.ui.client import DaemonClient
 from personal_agent.ui.i18n import set_language, tr
 from personal_agent.ui.model import Session
 from personal_agent.ui.pages import ManagerWindow
+from personal_agent.ui.radial import RadialItem, RadialMenu
 from personal_agent.ui.screen import (
     HighlightOverlay,
     RegionSelector,
@@ -65,6 +67,7 @@ class UiApp:
         self.region = RegionSelector()
         self.screen_state = "off"
         self._watch_actions: list[QAction] = []
+        self._wander_before = False  # wandering is paused while the radial menu is open
         self.speaker = Speaker()
         self.hotkeys = Hotkeys()
         self.avatar = AvatarWindow(load_skin(settings.ui.skin), settings.ui.avatar_scale, settings.ui.avatar_always_on_top)
@@ -103,6 +106,7 @@ class UiApp:
         self.settings.ui_changed.connect(lambda: c.send({"type": "settings_get"}))
         self.avatar.single_clicked.connect(lambda: self.quick.open_at(self.avatar))
         self.avatar.double_clicked.connect(self.show_chat)
+        self.avatar.menu_requested.connect(self.open_radial)
         self.avatar.files_dropped.connect(lambda paths: self.quick.open_at(self.avatar, paths))
         self.bubble.clicked.connect(self._bubble_clicked)
         self.tray.activated.connect(lambda r: self.show_chat() if r == QSystemTrayIcon.ActivationReason.Trigger else None)
@@ -147,10 +151,48 @@ class UiApp:
         self._action(self.tray_menu, "Show / hide avatar", "Hiện / ẩn avatar", self.toggle_avatar)
         self._action(self.tray_menu, "Quit the UI (the agent keeps running)", "Thoát giao diện (agent vẫn chạy)", self.quit)
         self.tray.setContextMenu(self.tray_menu)
-        self.avatar_menu = build()
-        self._action(self.avatar_menu, "Hide avatar", "Ẩn avatar", self.toggle_avatar)
-        self._action(self.avatar_menu, "Quit the UI", "Thoát giao diện", self.quit)
-        self.avatar.set_menu(self.avatar_menu)
+        self.radial = RadialMenu()
+        self.radial.closed.connect(self._radial_closed)
+
+    def _radial_items(self) -> list[RadialItem]:
+        R = RadialItem
+        def watching() -> bool:
+            return self.screen_state != "off"
+
+        def resume() -> None:
+            self.client.send({"type": "release_kill"})
+
+        pages = (("memory", "Memory", "Bộ nhớ", "🧠"), ("rag", "Documents", "Tài liệu", "📄"), ("mcp", "Tools / MCP", "Công cụ", "🧩"),
+                 ("schedules", "Schedules", "Lịch chạy", "⏰"), ("rules", "Remembered", "Đã nhớ", "📌"), ("audit", "Audit log", "Nhật ký", "📜"),
+                 ("usage", "Usage", "Mức dùng", "📊"), ("policy", "Policy", "Chính sách", "🛡"))
+        return [
+            R("Chat", "Chat", "💬", self.show_chat),
+            R("Talk", "Nói", "🎤", self.toggle_talk, active=lambda: self.recorder.active),
+            R("Capture", "Chụp", "📸", children=[
+                R("Whole screen", "Toàn màn hình", "🖥", lambda: self.capture("screen")),
+                R("Window (2 s)", "Cửa sổ (2 giây)", "🪟", self.capture_window_soon),
+                R("Select area", "Chọn vùng", "✂", self.capture_region)]),
+            R("Watch", "Theo dõi", "👁", self.toggle_watch, active=watching,
+              label=lambda: tr("Stop watching", "Dừng theo dõi") if watching() else tr("Watch screen", "Theo dõi màn hình")),
+            R("Approvals", "Phê duyệt", "✅", self.show_approvals, badge=lambda: len(self.session.approvals)),
+            R("Manage", "Quản lý", "🗂", children=[R(en, vi, g, partial(self.manager.open_page, k)) for k, en, vi, g in pages]),
+            R("More", "Thêm", "⋯", children=[
+                R("Settings", "Cài đặt", "⚙", self.show_settings),
+                R("Stop speaking", "Ngừng đọc", "🔇", self.speaker.stop),
+                R("Resume agent", "Cho chạy lại", "▶", resume),
+                R("Hide avatar", "Ẩn avatar", "🙈", self.toggle_avatar),
+                R("Quit the UI", "Thoát giao diện", "⏻", self.quit)]),
+            R("Pause agent", "Dừng agent", "⛔", self.kill, danger=True),  # the kill switch: needs a second click
+        ]
+
+    def open_radial(self) -> None:
+        self._wander_before = self.avatar.wandering
+        self.avatar.set_wander(False)
+        self.bubble.hide()
+        self.radial.open_around(self.avatar, self._radial_items())
+
+    def _radial_closed(self) -> None:
+        self.avatar.set_wander(self._wander_before)
 
     @staticmethod
     def _icon() -> QIcon:

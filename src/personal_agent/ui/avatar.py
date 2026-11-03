@@ -20,7 +20,7 @@ from PySide6.QtGui import (
     QPixmap,
     QTransform,
 )
-from PySide6.QtWidgets import QApplication, QLabel, QMenu, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QApplication, QLabel, QVBoxLayout, QWidget
 
 from personal_agent.ui.skin import Animation, Skin
 from personal_agent.ui.theme import AVATAR_INK, STATE
@@ -55,6 +55,7 @@ class AvatarWindow(QWidget):
     double_clicked = Signal()  # open the chat window
     files_dropped = Signal(list)
     moved = Signal(QPoint)
+    menu_requested = Signal()  # right click: the app opens the radial menu around the avatar
 
     def __init__(self, skin: Skin, scale: float = 1.0, always_on_top: bool = True) -> None:
         super().__init__()
@@ -68,7 +69,6 @@ class AvatarWindow(QWidget):
         self._press: QPoint | None = None
         self._drag_offset = QPoint()
         self._dragging = False
-        self._menu: QMenu | None = None
         self._click_timer = QTimer(self)
         self._click_timer.setSingleShot(True)
         self._click_timer.timeout.connect(self.single_clicked)
@@ -119,8 +119,9 @@ class AvatarWindow(QWidget):
         self.setToolTip(name)
         self.setWindowTitle(name)
 
-    def set_menu(self, menu: QMenu) -> None:
-        self._menu = menu
+    @property
+    def wandering(self) -> bool:
+        return self._wander
 
     def set_wander(self, on: bool) -> None:
         self._wander = on
@@ -266,9 +267,11 @@ class AvatarWindow(QWidget):
             self._click_timer.stop()
             self.double_clicked.emit()
 
-    def contextMenuEvent(self, e: QContextMenuEvent) -> None:
-        if self._menu is not None:
-            self._menu.exec(e.globalPos())
+    def contextMenuEvent(self, _: QContextMenuEvent) -> None:
+        if self._walk:  # the ring is centred on the avatar: keep it still while the menu is open
+            self._walk.stop()
+            self._end_walk()
+        self.menu_requested.emit()
 
     # ---- drag and drop files / images onto the avatar ----------------------------------------------------------------------
     def dragEnterEvent(self, e: QDragEnterEvent) -> None:
