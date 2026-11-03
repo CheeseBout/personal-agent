@@ -28,12 +28,30 @@ def test_memory_pages_list_edit_approve_delete(tmp_path: Path) -> None:
         assert [x["text"] for x in ask(ws, {"type": "memory_list", "status": "active"})["items"]] == ["The user likes green tea"]
         proposed = ask(ws, {"type": "memory_list", "status": "proposed"})["items"]
         assert [x["id"] for x in proposed] == [pid] and proposed[0]["sensitive"] == 1
-        assert ask(ws, {"type": "memory_update", "id": pid, "text": "I use a password manager"})["ok"] is True
-        assert ask(ws, {"type": "memory_update", "id": pid, "status": "active"})["ok"] is True  # the user approves it
-        assert ask(ws, {"type": "memory_update", "id": 999, "text": "x"})["ok"] is False
+        edited = ask(ws, {"type": "memory_update", "id": pid, "text": "I use a password manager"})
+        assert edited["ok"] is True and edited["id"] == pid
+        approved = ask(ws, {"type": "memory_update", "id": pid, "status": "active"})  # the user approves it
+        assert approved["ok"] is True and approved["status"] == "active"
+        sensitive = ask(ws, {"type": "memory_update", "id": pid, "text": "my password is hunter3"})  # an edit into sensitive text demotes it
+        assert sensitive["ok"] is True and sensitive["status"] == "proposed"
+        gone = ask(ws, {"type": "memory_update", "id": 999, "text": "x"})
+        assert gone["ok"] is False and gone["status"] is None
         assert ask(ws, {"type": "memory_update", "id": pid, "status": "weird"})["code"] == "bad_request"
-        assert ask(ws, {"type": "memory_delete", "id": pid})["ok"] is True
+        deleted = ask(ws, {"type": "memory_delete", "id": pid})
+        assert deleted["ok"] is True and deleted["id"] == pid
         assert ask(ws, {"type": "memory_delete", "id": pid})["ok"] is False
+
+
+def test_manage_replies_echo_only_an_integer_request_id(tmp_path: Path) -> None:
+    mid = services.memory().add("The user likes green tea", "semantic")["id"]
+    with app_client(tmp_path, answer("x")) as c:
+        ws = connect(c)
+        assert ask(ws, {"type": "memory_list", "rid": 7})["rid"] == 7
+        assert ask(ws, {"type": "memory_update", "id": 999, "text": "x", "rid": 8})["rid"] == 8
+        err = ask(ws, {"type": "memory_update", "id": mid, "status": "weird", "rid": 9})  # errors are matched to their request too
+        assert err["code"] == "bad_request" and err["rid"] == 9
+        for bad in ("<b>x</b>", True, 1.5, [1], None):
+            assert "rid" not in ask(ws, {"type": "memory_list", "rid": bad})
 
 
 def test_rag_page_lists_documents_and_reports_no_watcher(env: Path, tmp_path: Path) -> None:

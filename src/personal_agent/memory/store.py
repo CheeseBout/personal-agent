@@ -120,6 +120,11 @@ class MemoryStore:
             return db.execute("DELETE FROM memories WHERE id=?", (mid,)).rowcount > 0
 
     # ---- read ---------------------------------------------------------------------------------------------------
+    def get(self, mid: int) -> dict[str, Any] | None:
+        with closing(self._db()) as db:
+            r = db.execute("SELECT * FROM memories WHERE id=?", (mid,)).fetchone()
+            return dict(r) if r else None
+
     def items(self, status: str | None = None, kind: str | None = None) -> list[dict[str, Any]]:
         q = "SELECT * FROM memories WHERE 1=1"
         a: list[Any] = []

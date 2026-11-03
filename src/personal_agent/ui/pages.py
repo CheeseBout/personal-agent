@@ -2,16 +2,19 @@
 
 from __future__ import annotations
 
+import itertools
 import time
 from collections.abc import Callable
 from typing import Any
 
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import (
+    QComboBox,
     QHBoxLayout,
     QHeaderView,
     QInputDialog,
     QLabel,
+    QLineEdit,
     QMessageBox,
     QPlainTextEdit,
     QProgressBar,
@@ -34,6 +37,11 @@ def _ts(v: Any) -> str:
     return time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(float(v))) if v else ""
 
 
+def _confirm(title: tuple[str, str], text: tuple[str, str]) -> bool:
+    yes, no = QMessageBox.StandardButton.Yes, QMessageBox.StandardButton.No
+    return bool(QMessageBox.question(None, tr(title[0], title[1]), tr(text[0], text[1]), yes | no, no) == yes)
+
+
 def edit_memory_action(row: Row) -> Row | None:
     """Ask for the new text of a memory; None (send nothing) when cancelled or unchanged. The daemon re-checks length and sensitivity."""
     text, ok = QInputDialog.getMultiLineText(None, tr("Edit memory", "Sửa bộ nhớ"), tr("Text", "Nội dung"), str(row["text"]))
@@ -46,18 +54,47 @@ def edit_memory_action(row: Row) -> Row | None:
     return {"type": "memory_update", "id": row["id"], "text": text}
 
 
+def approve_memory_action(row: Row) -> Row | None:
+    """Approving activates the memory. A sensitive one (password, key, personal data) needs an explicit second yes."""
+    if row.get("sensitive") and not _confirm(("Approve memory", "Duyệt bộ nhớ"), (
+            "This memory looks sensitive (password, key, personal data). Approving lets the agent recall and use it. Approve anyway?",
+            "Mục này có vẻ nhạy cảm (mật khẩu, khóa, dữ liệu cá nhân). Duyệt sẽ cho agent nhớ và dùng nó. Vẫn duyệt?")):
+        return None
+    return {"type": "memory_update", "id": row["id"], "status": "active"}
+
+
+def delete_memory_action(row: Row) -> Row | None:
+    snippet = str(row["text"])[:200]
+    if not _confirm(("Delete memory", "Xóa bộ nhớ"), ("Delete this memory permanently?\n\n" + snippet, "Xóa vĩnh viễn mục này?\n\n" + snippet)):
+        return None
+    return {"type": "memory_delete", "id": row["id"]}
+
+
+_rids = itertools.count(1)  # request ids: the daemon echoes them, so replies can be matched and stale ones dropped
+REPLY_TIMEOUT_MS = 15_000
+
+
+def _key(v: Any) -> tuple[int, Any]:
+    return (0, float(v)) if isinstance(v, (int, float)) and not isinstance(v, bool) else (1, str(v).casefold())
+
+
 class TablePage(QWidget):
-    """A list the daemon sends as one event, with a button per row action and optional toolbar buttons."""
+    """A list the daemon sends as one event, with a button per row action, optional toolbar buttons, search, a facet filter and
+    click-to-sort headers. A row whose action is in flight stays locked until the daemon answers that request (or the list is rebuilt)."""
 
     def __init__(self, send: Send, request: Row, event: str, rows_of: Callable[[Row], list[Row]], columns: list[Column],
                  actions: list[tuple[str, str, Callable[[Row], Row | None]]] | None = None,
-                 toolbar: list[tuple[str, str, Row]] | None = None) -> None:
+                 toolbar: list[tuple[str, str, Row]] | None = None, *, wide: int | None = None, searchable: bool = False,
+                 facet: Column | None = None, empty: tuple[str, str] = ("Nothing here yet.", "Chưa có mục nào.")) -> None:
         super().__init__()
         self._send, self.request, self.event_type, self._rows_of, self._cols = send, request, event, rows_of, columns
-        self._actions = actions or []
-        self.rows: list[Row] = []
-        self._gen = 0  # bumped on every rebuild; a late undo of a stale row must not touch the new widgets
-        self._undos: list[Callable[[], None]] = []
+        self._actions, self._facet, self._empty = actions or [], facet, empty
+        self.note: Callable[[str], None] = lambda _t: None  # the window shows short messages
+        self.rows: list[Row] = []  # everything the daemon sent
+        self._view: list[Row] = []  # what is shown: filtered and sorted
+        self._sort: tuple[int, bool] | None = None
+        self._latest = 0  # id of the newest list request or action; older list replies are dropped
+        self._pending: dict[int, tuple[Row, int]] = {}  # request id -> (row, index of the action) still waiting for the daemon
         lay = QVBoxLayout(self)
         bar = QHBoxLayout()
         self.refresh_btn = QPushButton()
@@ -69,15 +106,38 @@ class TablePage(QWidget):
             b.clicked.connect(lambda _=False, p=payload: self._send(p))
             bar.addWidget(b)
             self._toolbar_btns.append((b, en, vi))
+        self.search = QLineEdit()
+        self.search.setClearButtonEnabled(True)
+        self.search.setVisible(searchable)
+        self.search.textChanged.connect(lambda _t: self._render())
+        self.facet_box = QComboBox()
+        self.facet_box.setVisible(facet is not None)
+        self.facet_box.currentIndexChanged.connect(lambda _i: self._render())
+        bar.addWidget(self.search, 1)
+        bar.addWidget(self.facet_box)
         bar.addStretch(1)
         lay.addLayout(bar)
         self.table = QTableWidget(0, len(columns) + (1 if self._actions else 0))
         self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self.table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
-        self.table.horizontalHeader().setStretchLastSection(True)
-        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
+        self.table.setTextElideMode(Qt.TextElideMode.ElideNone)
+        self.table.setWordWrap(True)
+        head = self.table.horizontalHeader()
+        head.setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
+        if wide is None:
+            head.setStretchLastSection(True)
+        else:
+            head.setSectionResizeMode(wide, QHeaderView.ResizeMode.Stretch)
+        head.setSortIndicatorShown(True)
+        head.setSortIndicator(-1, Qt.SortOrder.AscendingOrder)
+        head.sectionClicked.connect(self._sort_by)
+        head.sectionResized.connect(lambda *_a: self.table.resizeRowsToContents())  # wrapped text needs the final column width
         lay.addWidget(self.table)
+        self.empty_label = QLabel()
+        self.empty_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        lay.addWidget(self.empty_label)
         self.retranslate()
+        self._render()
 
     def retranslate(self) -> None:
         self.refresh_btn.setText(tr("Refresh", "Làm mới"))
@@ -85,39 +145,78 @@ class TablePage(QWidget):
             b.setText(tr(en, vi))
         heads = [tr(en, vi) for en, vi, _ in self._cols] + ([tr("Actions", "Thao tác")] if self._actions else [])
         self.table.setHorizontalHeaderLabels(heads)
+        self.search.setPlaceholderText(tr("Search...", "Tìm kiếm..."))
+        if self._facet is not None and self.facet_box.count():
+            self.facet_box.setItemText(0, tr("All", "Tất cả"))
+        self._show_empty()
 
     def refresh(self) -> None:
-        self._send(self.request)
+        rid = self._latest = next(_rids)
+        self._send({**self.request, "rid": rid})
 
-    def unstick(self) -> None:
-        """Give the buttons of rows that are still waiting for the daemon back (error, timeout)."""
-        undos, self._undos = self._undos, []
-        for u in undos:
-            u()
+    def settle(self, rid: Any) -> bool:
+        """The daemon refused or failed request `rid`: unlock that row. True if it was ours."""
+        if self._pending.pop(rid, None) is None:
+            return False
+        self._render()
+        return True
 
-    def _act(self, row: Row, make: Callable[[Row], Row | None], btn: QPushButton, box: QWidget) -> None:
-        if not (msg := make(row)):
+    def _timeout(self, rid: int) -> None:
+        # No answer: the outcome is unknown, so keep the row locked and ask the daemon for the truth instead of letting a second click repeat it.
+        if rid in self._pending:
+            self.note("⚠ " + tr("No answer from the agent yet; refreshing the list.", "Agent chưa trả lời; đang làm mới danh sách."))
+            self.refresh()
+
+    def _act(self, row: Row, idx: int) -> None:
+        if not (msg := self._actions[idx][2](row)):
             return
-        btns, label, gen = box.findChildren(QPushButton), btn.text(), self._gen
-        for b in btns:
-            b.setEnabled(False)
-        btn.setText(tr("Working…", "Đang xử lý…"))
+        rid = self._latest = next(_rids)  # also supersedes any list request still in flight
+        self._pending[rid] = (row, idx)
+        self._render()  # locks the row (and survives later filter / sort re-renders)
+        QTimer.singleShot(REPLY_TIMEOUT_MS, lambda: self._timeout(rid))
+        self._send({**msg, "rid": rid})
 
-        def undo() -> None:
-            if gen == self._gen:
-                btn.setText(label)
-                for b in btns:
-                    b.setEnabled(True)
-        self._undos.append(undo)
-        QTimer.singleShot(10_000, undo)
-        self._send(msg)
-
-    def load(self, ev: Row) -> None:
-        self._gen += 1
-        self._undos.clear()
+    def load(self, ev: Row) -> bool:
+        if isinstance(rid := ev.get("rid"), int) and rid < self._latest:
+            return False  # an older list that crossed a newer request: showing it could bring back a deleted row
         self.rows = self._rows_of(ev)
-        self.table.setRowCount(len(self.rows))
-        for r, row in enumerate(self.rows):
+        self._pending.clear()  # a list requested after every action is the daemon's truth
+        if self._facet is not None:
+            keep = self.facet_box.currentData() or ""
+            vals = sorted({str(self._facet[2](r)) for r in self.rows})
+            self.facet_box.blockSignals(True)
+            self.facet_box.clear()
+            self.facet_box.addItem(tr("All", "Tất cả"), "")
+            for v in vals:
+                self.facet_box.addItem(v, v)
+            self.facet_box.setCurrentIndex(max(0, self.facet_box.findData(keep)))
+            self.facet_box.blockSignals(False)
+        self._render()
+        return True
+
+    def _sort_by(self, col: int) -> None:
+        if col >= len(self._cols):
+            return
+        self._sort = (col, not self._sort[1] if self._sort and self._sort[0] == col else False)
+        self.table.horizontalHeader().setSortIndicator(col, Qt.SortOrder.DescendingOrder if self._sort[1] else Qt.SortOrder.AscendingOrder)
+        self._render()
+
+    def _show_empty(self) -> None:
+        self.empty_label.setText(tr("No matches.", "Không có kết quả phù hợp.") if self.rows else tr(self._empty[0], self._empty[1]))
+        self.empty_label.setVisible(not self._view)
+
+    def _render(self) -> None:
+        view = self.rows
+        if self._facet is not None and (want := self.facet_box.currentData()):
+            view = [r for r in view if str(self._facet[2](r)) == want]
+        if needle := self.search.text().strip().casefold():
+            view = [r for r in view if any(needle in str(get(r)).casefold() for _, _, get in self._cols)]
+        if self._sort:
+            get = self._cols[self._sort[0]][2]
+            view = sorted(view, key=lambda r: _key(get(r)), reverse=self._sort[1])
+        self._view = list(view)
+        self.table.setRowCount(len(self._view))
+        for r, row in enumerate(self._view):
             for c, (_, _, get) in enumerate(self._cols):
                 it = QTableWidgetItem(str(get(row)))
                 it.setToolTip(str(get(row)))
@@ -126,11 +225,16 @@ class TablePage(QWidget):
                 box = QWidget()
                 h = QHBoxLayout(box)
                 h.setContentsMargins(2, 0, 2, 0)
-                for en, vi, make in self._actions:
-                    b = QPushButton(tr(en, vi))
-                    b.clicked.connect(lambda _=False, row=row, make=make, b=b, box=box: self._act(row, make, b, box))
+                busy = next((i for pr, i in self._pending.values() if pr is row), None)
+                for i, (en, vi, _make) in enumerate(self._actions):
+                    b = QPushButton(tr("Working…", "Đang xử lý…") if busy == i else tr(en, vi))
+                    b.setEnabled(busy is None)
+                    b.clicked.connect(lambda _=False, row=row, i=i: self._act(row, i))
                     h.addWidget(b)
                 self.table.setCellWidget(r, len(self._cols), box)
+        self.table.resizeRowsToContents()
+        self.table.setVisible(bool(self._view))
+        self._show_empty()
 
 
 class UsagePage(QWidget):
@@ -246,9 +350,9 @@ class ManagerWindow(QTabWidget):
         mem = P(send, {"type": "memory_list"}, "memory", lambda e: e["items"],
                 [("ID", "ID", lambda r: r["id"]), ("Kind", "Loại", lambda r: r["kind"]), ("Status", "Trạng thái",
                  lambda r: r["status"] + (" ⚠" if r.get("sensitive") else "")), ("Text", "Nội dung", lambda r: r["text"])],
-                [("Edit", "Sửa", edit_memory_action),
-                 ("Approve", "Duyệt", lambda r: {"type": "memory_update", "id": r["id"], "status": "active"}),
-                 ("Delete", "Xóa", lambda r: {"type": "memory_delete", "id": r["id"]})])
+                [("Edit", "Sửa", edit_memory_action), ("Approve", "Duyệt", approve_memory_action), ("Delete", "Xóa", delete_memory_action)],
+                wide=3, searchable=True, facet=("Status", "Trạng thái", lambda r: r["status"]),
+                empty=("No memories yet. The agent saves them as you chat.", "Chưa có bộ nhớ nào. Agent sẽ lưu khi bạn trò chuyện."))
         rag = P(send, {"type": "rag_list"}, "rag", lambda e: e["items"],
                 [("Source", "Nguồn", lambda r: r["source"]), ("Type", "Loại", lambda r: r["kind"]), ("Chunks", "Đoạn", lambda r: r["chunks"])],
                 toolbar=[("Pause watching", "Tạm dừng theo dõi", {"type": "rag_pause"}), ("Resume", "Tiếp tục", {"type": "rag_resume"}),
@@ -282,6 +386,11 @@ class ManagerWindow(QTabWidget):
         self._route = {"memory": "memory", "rag": "rag", "mcp": "mcp", "schedules": "schedules", "rules": "rules", "audit": "audit",
                        "usage": "usage", "policy": "policy"}
         self._after = {"memory_updated": "memory", "memory_deleted": "memory", "mcp_set": "mcp", "schedule_cancel": "schedules", "rag_synced": "rag"}
+        self._note = ""  # shown once, after the list that follows a change has loaded
+        self.status.setAlignment(Qt.AlignmentFlag.AlignRight)
+        for w, _en, _vi in self._tabs:
+            if isinstance(w, TablePage):
+                w.note = self.status.setText
         self.currentChanged.connect(lambda _i: self._refresh_current())
         self.setCornerWidget(self.status)
         self.retranslate()
@@ -304,23 +413,35 @@ class ManagerWindow(QTabWidget):
         self.show()
         self.raise_()
 
+    @staticmethod
+    def _result_note(ev: Row) -> str:
+        t, ok = ev.get("type"), ev.get("ok")
+        if t == "memory_deleted":
+            return tr("Deleted.", "Đã xóa.") if ok else "⚠ " + tr("That memory no longer exists.", "Mục này không còn tồn tại.")
+        if t == "memory_updated":
+            if not ok:
+                return "⚠ " + tr("That memory no longer exists.", "Mục này không còn tồn tại.")
+            if ev.get("status") == "proposed":
+                return tr("Saved. It looks sensitive, so it is waiting for your approval.", "Đã lưu. Nội dung có vẻ nhạy cảm nên đang chờ bạn duyệt.")
+            return tr("Saved.", "Đã lưu.")
+        return ""
+
     def on_event(self, ev: Row) -> bool:
         """Feed a daemon event; returns True if a page consumed it."""
         t = ev.get("type", "")
         if t in self._route:
-            w = self.pages[self._route[t]][0]
-            w.load(ev)  # type: ignore[attr-defined]
-            self.status.setText("")
+            if self.pages[self._route[t]][0].load(ev) is not False:  # type: ignore[attr-defined]
+                self.status.setText(self._note)
+                self._note = ""
             return True
         if t in self._after:
-            w = self.pages[self._after[t]][0]
-            w.refresh()  # type: ignore[attr-defined]
+            self._note = self._result_note(ev)
+            self.pages[self._after[t]][0].refresh()  # type: ignore[attr-defined]
             return True
         if t == "error":
             for w, _ in self.pages.values():
                 if isinstance(w, TablePage):
-                    w.unstick()
-        if t == "error" and self.isVisible():
-            self.status.setText(f"⚠ {ev.get('message', '')}")
-            self.status.setAlignment(Qt.AlignmentFlag.AlignRight)
+                    w.settle(ev.get("rid"))  # only the request that failed gets its row back
+            if self.isVisible():
+                self.status.setText(f"⚠ {ev.get('message', '')}")
         return False

@@ -303,20 +303,50 @@ def test_approval_center_keeps_half_filled_answers_on_unrelated_refresh(qapp: QA
 
 
 # ---- manager pages ------------------------------------------------------------------------------------------------------------------------
-def test_manager_pages_fill_from_events_and_send_row_actions(qapp: QApplication) -> None:
+def bare(msgs: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [{k: v for k, v in m.items() if k != "rid"} for m in msgs]
+
+
+def confirm(monkeypatch: Any, yes: bool = True) -> list[str]:
+    """Answer the yes/no boxes without showing them; returns the texts that were asked."""
+    asked: list[str] = []
+
+    def q(_p: Any, _title: str, text: str, *_a: Any) -> Any:
+        asked.append(text)
+        return QMessageBox.StandardButton.Yes if yes else QMessageBox.StandardButton.No
+    monkeypatch.setattr(QMessageBox, "question", q)
+    return asked
+
+
+def mem_page(m: ManagerWindow, items: list[dict[str, Any]]) -> Any:
+    m.on_event({"type": "memory", "items": items})
+    return m.pages["memory"][0]
+
+
+def row_btns(page: Any, row: int) -> list[QPushButton]:
+    return page.table.cellWidget(row, 4).findChildren(QPushButton)
+
+
+ITEMS = [{"id": 4, "kind": "fact", "status": "active", "text": "likes tea"},
+         {"id": 5, "kind": "pref", "status": "proposed", "text": "my password is hunter2", "sensitive": 1},
+         {"id": 6, "kind": "fact", "status": "active", "text": "lives in Hanoi"}]
+
+
+def test_manager_pages_fill_from_events_and_send_row_actions(qapp: QApplication, monkeypatch: Any) -> None:
+    asked = confirm(monkeypatch)
     sent: list[dict[str, Any]] = []
     m = ManagerWindow(sent.append)
-    m.on_event({"type": "memory", "items": [{"id": 4, "kind": "fact", "status": "proposed", "text": "likes tea", "sensitive": True}]})
-    page = m.pages["memory"][0]
+    page = mem_page(m, [{"id": 4, "kind": "fact", "status": "proposed", "text": "likes tea", "sensitive": True}])
     assert page.table.rowCount() == 1 and page.table.item(0, 2).text().endswith("⚠")
-    buttons = page.table.cellWidget(0, 4).findChildren(QPushButton)
-    buttons[1].click()
-    m.on_event({"type": "memory", "items": m.pages["memory"][0].rows})  # a finished action rebuilds the row
-    page.table.cellWidget(0, 4).findChildren(QPushButton)[2].click()
-    assert sent == [{"type": "memory_update", "id": 4, "status": "active"}, {"type": "memory_delete", "id": 4}]
+    row_btns(page, 0)[1].click()
+    assert len(asked) == 1 and "sensitive" in asked[0]  # approving a sensitive memory asks first
+    mem_page(m, page.rows)  # a finished action rebuilds the row
+    row_btns(page, 0)[2].click()
+    assert len(asked) == 2 and "likes tea" in asked[1]  # deleting asks first and shows what goes
+    assert bare(sent) == [{"type": "memory_update", "id": 4, "status": "active"}, {"type": "memory_delete", "id": 4}]
     sent.clear()
     m.on_event({"type": "memory_deleted", "ok": True})  # a change re-requests the list
-    assert sent == [{"type": "memory_list"}]
+    assert bare(sent) == [{"type": "memory_list"}]
     m.on_event({"type": "mcp", "servers": {"fs": {"enabled": True, "status": "ok"}}})
     assert m.pages["mcp"][0].table.item(0, 0).text() == "fs"
     m.on_event({"type": "usage", "today": {"tokens": 10, "cost_usd": 0.5, "calls": 2}, "caps": {"tokens": 100, "cost_usd": 1.0},
@@ -332,21 +362,98 @@ def test_manager_pages_fill_from_events_and_send_row_actions(qapp: QApplication)
     assert sent[0]["type"] == "policy_set" and sent[0]["text"].startswith("default_tier")
 
 
-def test_row_action_shows_working_until_the_list_comes_back_or_an_error(qapp: QApplication) -> None:
+def test_declining_the_confirmation_sends_nothing_and_plain_approve_does_not_ask(qapp: QApplication, monkeypatch: Any) -> None:
+    asked = confirm(monkeypatch, yes=False)
     sent: list[dict[str, Any]] = []
     m = ManagerWindow(sent.append)
-    items = [{"id": 4, "kind": "fact", "status": "active", "text": "a"}, {"id": 5, "kind": "fact", "status": "active", "text": "b"}]
-    m.on_event({"type": "memory", "items": items})
+    page = mem_page(m, ITEMS)
+    row_btns(page, 1)[1].click()  # approve the sensitive one
+    row_btns(page, 0)[2].click()  # delete
+    assert sent == [] and len(asked) == 2 and all(b.isEnabled() for b in row_btns(page, 0) + row_btns(page, 1))
+    row_btns(page, 2)[1].click()  # approve a non-sensitive one: no extra question
+    assert len(asked) == 2 and bare(sent) == [{"type": "memory_update", "id": 6, "status": "active"}]
+
+
+def test_a_row_stays_locked_until_its_own_reply_and_survives_filtering(qapp: QApplication, monkeypatch: Any) -> None:
+    confirm(monkeypatch)
+    sent: list[dict[str, Any]] = []
+    m = ManagerWindow(sent.append)
+    page = mem_page(m, ITEMS)
+    btns = row_btns(page, 0)
+    btns[2].click()
+    rid = sent[0]["rid"]
+    assert bare(sent) == [{"type": "memory_delete", "id": 4}] and not any(b.isEnabled() for b in row_btns(page, 0))
+    assert row_btns(page, 0)[2].text() == "Working…"
+    assert all(b.isEnabled() for b in row_btns(page, 1))  # other rows stay usable
+    m.on_event({"type": "error", "message": "unrelated"})  # no request id: not ours, nothing is unlocked
+    page.search.setText("zzz")
+    page.search.setText("")  # filtering rebuilds the rows; the pending one is still locked
+    assert not any(b.isEnabled() for b in row_btns(page, 0)) and row_btns(page, 0)[2].text() == "Working…"
+    page._timeout(rid)  # no answer in time: ask for the truth, do not let a second click repeat it
+    assert sent[-1]["type"] == "memory_list" and not any(b.isEnabled() for b in row_btns(page, 0))
+    m.on_event({"type": "error", "rid": rid, "message": "boom"})  # the daemon refused exactly this request
+    assert all(b.isEnabled() for b in row_btns(page, 0)) and row_btns(page, 0)[2].text() == "Delete"
+    row_btns(page, 0)[2].click()
+    mem_page(m, ITEMS[1:])  # a new list is the truth of the daemon and rebuilds the table
+    assert page.table.rowCount() == 2 and all(b.isEnabled() for b in row_btns(page, 0))
+
+
+def test_a_stale_list_reply_is_dropped(qapp: QApplication, monkeypatch: Any) -> None:
+    confirm(monkeypatch)
+    sent: list[dict[str, Any]] = []
+    m = ManagerWindow(sent.append)
+    page = mem_page(m, ITEMS)
+    page.refresh()
+    old = sent[-1]["rid"]
+    row_btns(page, 0)[2].click()  # an action supersedes the list request still in flight
+    m.on_event({"type": "memory", "items": ITEMS, "rid": old})
+    assert page.table.rowCount() == 3 and not row_btns(page, 0)[2].isEnabled()  # ignored: it would bring the deleted row back
+    m.on_event({"type": "memory_deleted", "ok": True, "id": 4, "rid": sent[-1]["rid"]})
+    fresh = sent[-1]["rid"]
+    assert sent[-1]["type"] == "memory_list" and fresh > old
+    m.on_event({"type": "memory", "items": ITEMS[1:], "rid": fresh})
+    assert page.table.rowCount() == 2
+
+
+def test_results_are_reported_after_the_list_reloads(qapp: QApplication) -> None:
+    sent: list[dict[str, Any]] = []
+    m = ManagerWindow(sent.append)
+    page = mem_page(m, ITEMS)
+
+    def settle(ev: dict[str, Any]) -> str:
+        m.on_event(ev)
+        m.on_event({"type": "memory", "items": ITEMS, "rid": sent[-1]["rid"]})
+        return m.status.text()
+    assert settle({"type": "memory_deleted", "ok": True}) == "Deleted."
+    assert settle({"type": "memory_deleted", "ok": False}).startswith("⚠")
+    assert settle({"type": "memory_updated", "ok": True, "status": "active"}) == "Saved."
+    assert "approval" in settle({"type": "memory_updated", "ok": True, "status": "proposed"})
+    assert settle({"type": "memory_updated", "ok": False}).startswith("⚠")
+    assert page.table.rowCount() == 3
+
+
+def test_memory_table_searches_filters_sorts_and_explains_when_empty(qapp: QApplication) -> None:
+    m = ManagerWindow(lambda _p: None)
     page = m.pages["memory"][0]
-    btns = page.table.cellWidget(0, 4).findChildren(QPushButton)
-    btns[2].click()
-    assert sent == [{"type": "memory_delete", "id": 4}] and not any(b.isEnabled() for b in btns) and btns[2].text() == "Working…"
-    assert all(b.isEnabled() for b in page.table.cellWidget(1, 4).findChildren(QPushButton))  # other rows stay usable
-    m.on_event({"type": "error", "message": "boom"})  # the daemon refused: the buttons come back
-    assert all(b.isEnabled() for b in btns) and btns[2].text() == "Delete"
-    btns[2].click()
-    m.on_event({"type": "memory", "items": items[1:]})  # the new list rebuilds the table
-    assert page.table.rowCount() == 1 and page.table.cellWidget(0, 4).findChildren(QPushButton)[2].isEnabled()
+    assert not page.empty_label.isHidden() and "No memories yet" in page.empty_label.text() and page.table.isHidden()
+    mem_page(m, ITEMS)
+    assert page.empty_label.isHidden() and page.table.rowCount() == 3
+    assert [page.facet_box.itemText(i) for i in range(3)] == ["All", "active", "proposed"]
+    page.search.setText("TEA")
+    assert page.table.rowCount() == 1 and page.table.item(0, 3).text() == "likes tea"
+    page.search.setText("nothing like this")
+    assert page.table.rowCount() == 0 and page.empty_label.text() == "No matches."
+    page.search.setText("")
+    page.facet_box.setCurrentIndex(page.facet_box.findData("proposed"))
+    assert page.table.rowCount() == 1 and page.table.item(0, 0).text() == "5"
+    mem_page(m, ITEMS)  # a reload keeps the chosen filter
+    assert page.facet_box.currentData() == "proposed" and page.table.rowCount() == 1
+    page.facet_box.setCurrentIndex(0)
+    page.table.horizontalHeader().sectionClicked.emit(0)
+    page.table.horizontalHeader().sectionClicked.emit(0)  # second click: descending
+    assert [page.table.item(r, 0).text() for r in range(3)] == ["6", "5", "4"]
+    page.table.horizontalHeader().sectionClicked.emit(3)  # sorts by text
+    assert [page.table.item(r, 3).text() for r in range(3)] == ["likes tea", "lives in Hanoi", "my password is hunter2"]
 
 
 def test_memory_edit_sends_the_new_text_and_ignores_cancel_or_no_change(qapp: QApplication, monkeypatch: Any) -> None:
@@ -358,7 +465,7 @@ def test_memory_edit_sends_the_new_text_and_ignores_cancel_or_no_change(qapp: QA
         monkeypatch.setattr(QInputDialog, "getMultiLineText", lambda *_a, answer=answer: answer)
         monkeypatch.setattr(QMessageBox, "warning", lambda *_a: None)
         edit.click()
-    assert sent == [{"type": "memory_update", "id": 4, "text": "likes green tea"}]
+    assert bare(sent) == [{"type": "memory_update", "id": 4, "text": "likes green tea"}]
 
 
 def test_language_switch_retranslates_the_manager(qapp: QApplication) -> None:

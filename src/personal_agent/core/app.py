@@ -257,10 +257,13 @@ def create_app(brain: Brain | None = None, db_path: Path | None = None, token: s
         if kind == "memory_list":
             return {"type": "memory", "items": mem.items(msg.get("status"), msg.get("kind"))}
         if kind == "memory_update":  # edit text and/or approve a proposal (status=active)
-            ok = await asyncio.to_thread(mem.update, int(msg["id"]), msg.get("text"), msg.get("status"))
-            return {"type": "memory_updated", "ok": ok}
+            mid = int(msg["id"])
+            ok = await asyncio.to_thread(mem.update, mid, msg.get("text"), msg.get("status"))
+            now = await asyncio.to_thread(mem.get, mid)  # the resulting status: an edit into sensitive text demotes to 'proposed'
+            return {"type": "memory_updated", "ok": ok, "id": mid, "status": now["status"] if now else None}
         if kind == "memory_delete":
-            return {"type": "memory_deleted", "ok": mem.delete(int(msg["id"]))}
+            mid = int(msg["id"])
+            return {"type": "memory_deleted", "ok": await asyncio.to_thread(mem.delete, mid), "id": mid}
         if kind == "rag_list":
             return {"type": "rag", "items": rag.documents(), "watching": bool(s.watcher), "paused": bool(s.watcher and s.watcher.paused)}
         if kind in ("rag_pause", "rag_resume"):
@@ -376,9 +379,12 @@ def create_app(brain: Brain | None = None, db_path: Path | None = None, token: s
             await send({"type": "rules", "items": s.approvals.rules(), "deleted": ok})
         elif isinstance(kind, str) and kind in MANAGE:
             try:
-                await send(await manage(kind, msg))
+                reply = await manage(kind, msg)
             except (ValueError, TypeError, KeyError) as e:
-                await send({"type": "error", "code": "bad_request", "message": str(e)[:200]})
+                reply = {"type": "error", "code": "bad_request", "message": str(e)[:200]}
+            if isinstance(rid := msg.get("rid"), int) and not isinstance(rid, bool):  # lets the UI match a reply to its request (ints only: nothing else is echoed)
+                reply["rid"] = rid
+            await send(reply)
         elif kind == "set_agent_name":
             try:
                 set_agent_name(settings, str(msg.get("name", "")))
