@@ -608,3 +608,31 @@ def test_documents_page_state_jobs_and_reports(qapp: QApplication, monkeypatch: 
     page.search_btn.click()
     m.on_event({"type": "error", "rid": sent[-1]["rid"], "message": "x"})
     assert page.search_btn.isEnabled()  # a refused search unlocks the button
+
+
+def test_mcp_page_shows_reload_state_confirms_and_locks_while_reloading(qapp: QApplication, monkeypatch: Any) -> None:
+    asked = confirm(monkeypatch)
+    sent: list[dict[str, Any]] = []
+    m = ManagerWindow(sent.append)
+    page = m.pages["mcp"][0]
+    srv = {"enabled": True, "status": "ok (1 tools)", "kind": "stdio", "target": "npx -y thing", "env": ["TOKEN"], "reload_needed": False,
+           "tools": [{"name": "fs_read", "tier": "T0"}], "skipped": [{"name": "fs_bad", "reason": "invalid tier 'T9'"}]}
+    off = {**srv, "enabled": False, "status": "disabled", "tools": [], "skipped": [], "reload_needed": True}
+    m.on_event({"type": "mcp", "servers": {"fs": srv, "old": off}, "reload_needed": True})
+    assert page.table.rowCount() == 2
+    assert "reload needed" in page.table.item(1, 4).text() or "cần tải lại" in page.table.item(1, 4).text()
+    assert "not applied" in page.state.text() or "chưa được áp dụng" in page.state.text()
+
+    def labels(r: int) -> list[str]:
+        return [b.toolTip().split(":")[0] for b in page.table.cellWidget(r, 6).findChildren(QPushButton)]
+
+    assert labels(0) == ["Disable", "Tools", "Remove"] and labels(1) == ["Enable", "Tools", "Remove"]  # only the action that applies
+    page.table.cellWidget(0, 6).findChildren(QPushButton)[1].click()  # Tools: shows tiers and skipped, sends nothing
+    assert "[T0] fs_read" in page.output.toPlainText() and "invalid tier" in page.output.toPlainText() and not sent
+    page.table.cellWidget(1, 6).findChildren(QPushButton)[0].click()  # Enable asks first and says what would run
+    assert asked and "npx -y thing" in asked[-1] and sent[-1]["type"] == "mcp_set" and sent[-1]["enabled"] is True
+    page.reload_btn.click()
+    assert "npx -y thing" in asked[-1] and sent[-1]["type"] == "mcp_reload" and not page.reload_btn.isEnabled()  # locked, with a busy label
+    m.on_event({"type": "mcp", "rid": sent[-1]["rid"], "reloaded": True, "reload_needed": False,
+                "servers": {"fs": {**srv, "status": "error: boom"}, "old": off}})
+    assert page.reload_btn.isEnabled() and "boom" in page.output.toPlainText() and "⚠" in m.status.text()

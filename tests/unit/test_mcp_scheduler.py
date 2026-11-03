@@ -190,3 +190,33 @@ async def test_creating_a_schedule_requires_approval_and_shows_what_will_run(env
 
 
 _ = FakeBrain
+
+
+async def test_a_server_that_fails_on_reload_keeps_its_previous_tools(env: Path) -> None:
+    write_cfg({"demo": {"command": sys.executable, "args": [SERVER]}})
+    await mcp_client.load_tools()
+    write_cfg({"demo": {"command": "definitely-not-a-real-binary-xyz"}})
+    status = await mcp_client.load_tools()
+    assert status["demo"].startswith("error") and "kept 3 previous tools" in status["demo"]
+    assert meta_for("demo_echo") is not None  # staged reload: the failure did not remove what worked
+
+
+async def test_a_broken_config_raises_before_anything_is_unloaded(env: Path) -> None:
+    write_cfg({"demo": {"command": sys.executable, "args": [SERVER]}})
+    await mcp_client.load_tools()
+    (data_dir() / "mcp.yaml").write_text("servers: [oops", encoding="utf-8")
+    with pytest.raises(ValueError):
+        await mcp_client.load_tools()
+    assert meta_for("demo_echo") is not None
+
+
+async def test_t0_cannot_be_the_server_wide_default_and_skipped_tools_are_reported(env: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from personal_agent.tools.registry import policy
+
+    monkeypatch.setitem(policy().cfg, "mcp_default_tier", "T0")
+    write_cfg({"demo": {"command": sys.executable, "args": [SERVER], "tools": {"echo": "T9", "add": "T0"}}})
+    status = await mcp_client.load_tools()
+    echo, add, who = meta_for("demo_echo"), meta_for("demo_add"), meta_for("demo_whoami_env")
+    assert echo is None and add is not None and add.tier == "T0"  # an explicit per-tool T0 is still the user's choice
+    assert who is not None and who.tier == "T2"  # the T0 default was refused
+    assert "1 skipped" in status["demo"] and mcp_client.details("demo")["skipped"][0]["reason"].startswith("invalid tier")

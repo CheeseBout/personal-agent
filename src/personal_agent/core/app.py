@@ -249,7 +249,7 @@ def create_app(brain: Brain | None = None, db_path: Path | None = None, token: s
                 app.state.screen.stop("no UI connected")
 
     MANAGE = {"memory_list", "memory_update", "memory_delete", "rag_list", "rag_pause", "rag_resume", "rag_sync", "rag_add", "rag_remove", "rag_search",
-              "mcp_list", "mcp_set", "mcp_reload", "schedules", "schedule_cancel"}
+              "mcp_list", "mcp_set", "mcp_reload", "mcp_add", "mcp_remove", "schedules", "schedule_cancel"}
 
     async def manage(kind: str, msg: dict[str, Any]) -> dict[str, Any]:
         """Management calls behind the Memory / RAG / MCP / Schedule pages (shown in the UI Manager window)."""
@@ -305,17 +305,34 @@ def create_app(brain: Brain | None = None, db_path: Path | None = None, token: s
                 raise ValueError("type something to search for")
             hits, note = await asyncio.to_thread(rag.search, q[:500], 5, None)
             return {"type": "rag_results", "note": note, "hits": [{"cite": h.cite, "text": h.text[:1200], "score": round(h.score, 3)} for h in hits]}
+        def mcp_view() -> dict[str, Any]:
+            servers = {}
+            for n, sp in mcp_client.read_config()["servers"].items():
+                d = mcp_client.details(n)
+                servers[n] = {"enabled": bool(sp.get("enabled", True)) if isinstance(sp, dict) else False,
+                              "status": s.mcp_status.get(n, "not loaded"), **mcp_client.describe(sp),
+                              "tools": d["tools"], "skipped": d["skipped"], "reload_needed": n in mcp_client.pending}
+            return {"type": "mcp", "servers": servers, "reload_needed": bool(mcp_client.pending)}
+
         if kind == "mcp_list":
-            return {"type": "mcp", "servers": {n: {"enabled": sp.get("enabled", True), "status": s.mcp_status.get(n, "not loaded")}
-                                               for n, sp in mcp_client.read_config()["servers"].items()}}
+            return mcp_view()
         if kind == "mcp_set":
-            return {"type": "mcp_set", "ok": mcp_client.set_enabled(str(msg["name"]), bool(msg["enabled"])), "reload_needed": True}
+            name = str(msg["name"])
+            ok = mcp_client.set_enabled(name, bool(msg["enabled"]))
+            return {"type": "mcp_set", "ok": ok, "name": name, "enabled": bool(msg["enabled"]), "reload_needed": ok}
+        if kind == "mcp_add":  # added disabled; the UI shows what it would run and asks before enabling
+            name = str(msg["name"])
+            mcp_client.add_server(name, {"command": msg.get("command"), "args": msg.get("args"), "env": msg.get("env"), "url": msg.get("url")})
+            return {"type": "mcp_added", "name": name, "reload_needed": True}
+        if kind == "mcp_remove":
+            name = str(msg["name"])
+            return {"type": "mcp_removed", "ok": mcp_client.remove_server(name), "name": name, "reload_needed": True}
         if kind == "mcp_reload":
             if s.tasks:
                 return {"type": "error", "code": "busy", "message": "finish the running task first"}
-            s.mcp_status = await mcp_client.load_tools()
+            s.mcp_status = await mcp_client.load_tools()  # a broken mcp.yaml raises ValueError before anything is unloaded
             s.graph = s.make_graph()  # same checkpointer: threads (and pending approvals) continue
-            return {"type": "mcp", "servers": {n: {"status": st} for n, st in s.mcp_status.items()}}
+            return {**mcp_view(), "reloaded": True}
         if kind == "schedules":
             return {"type": "schedules", "items": services.scheduler().jobs()}
         return {"type": "schedule_cancel", "ok": services.scheduler().cancel(int(msg["id"]))}

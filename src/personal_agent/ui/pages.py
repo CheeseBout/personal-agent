@@ -10,7 +10,10 @@ from typing import Any
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import (
     QComboBox,
+    QDialog,
+    QDialogButtonBox,
     QFileDialog,
+    QFormLayout,
     QHBoxLayout,
     QHeaderView,
     QInputDialog,
@@ -251,7 +254,11 @@ class TablePage(QWidget):
                 h.setContentsMargins(2, 0, 2, 0)
                 busy = next((i for pr, i in self._pending.values() if pr is row), None)
                 for i, (en, vi, _make) in enumerate(self._actions):
+                    if (applies := getattr(_make, "applies", None)) and not applies(row):
+                        continue  # e.g. no "Enable" on a server that is already enabled
                     b = QPushButton(tr("Working…", "Đang xử lý…") if busy == i else tr(en, vi))
+                    b.setToolTip(f"{tr(en, vi)}: {self._cols[0][2](row)}")
+                    b.setAccessibleName(b.toolTip())
                     b.setEnabled(busy is None)
                     b.clicked.connect(lambda _=False, row=row, i=i: self._act(row, i))
                     h.addWidget(b)
@@ -406,6 +413,200 @@ class DocumentsPage(TablePage):
         self.output.setPlainText(head + (body or tr("No matching passages.", "Không có đoạn nào phù hợp.")))
 
 
+def _mcp_what(row: Row) -> str:
+    verb = tr("connect to", "kết nối tới") if row.get("kind") == "http" else tr("run", "chạy")
+    env = row.get("env") or []
+    extra = (tr("\nEnvironment variables passed: ", "\nBiến môi trường được truyền: ") + ", ".join(env)) if env else ""
+    return f"{verb}:\n\n{row.get('target', '')}{extra}"
+
+
+class AddServerDialog(QDialog):
+    """Collects a new MCP server. The server is stored disabled; nothing runs until the user enables it and reloads."""
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setWindowTitle(tr("Add MCP server", "Thêm máy chủ MCP"))
+        self.name, self.kind, self.command, self.url = QLineEdit(), QComboBox(), QLineEdit(), QLineEdit()
+        self.args, self.env = QPlainTextEdit(), QPlainTextEdit()
+        self.kind.addItem(tr("Local command (stdio)", "Lệnh cục bộ (stdio)"), "stdio")
+        self.kind.addItem(tr("Remote URL (http)", "URL từ xa (http)"), "http")
+        self.args.setPlaceholderText(tr("One argument per line", "Mỗi dòng một đối số"))
+        self.env.setPlaceholderText(tr("NAME=value or NAME=${SECRET_NAME}, one per line", "TEN=giá trị hoặc TEN=${TEN_BÍ_MẬT}, mỗi dòng một biến"))
+        self.args.setFixedHeight(70)
+        self.env.setFixedHeight(70)
+        form = QFormLayout(self)
+        form.addRow(tr("Name", "Tên"), self.name)
+        form.addRow(tr("Type", "Loại"), self.kind)
+        form.addRow(tr("Command", "Lệnh"), self.command)
+        form.addRow(tr("Arguments", "Đối số"), self.args)
+        form.addRow(tr("Environment", "Môi trường"), self.env)
+        form.addRow("URL", self.url)
+        note = QLabel(tr("The server is added disabled. Review it, enable it, then reload: only then is anything started or contacted. "
+                         "Its tools will ask for your approval.",
+                         "Máy chủ được thêm ở trạng thái tắt. Hãy xem lại, bật nó rồi tải lại: chỉ khi đó mới có gì được khởi chạy hay kết nối. "
+                         "Các công cụ của nó sẽ hỏi bạn duyệt."))
+        note.setWordWrap(True)
+        form.addRow(note)
+        box = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        box.accepted.connect(self.accept)
+        box.rejected.connect(self.reject)
+        form.addRow(box)
+        self.kind.currentIndexChanged.connect(self._toggle)
+        self._toggle()
+
+    def _toggle(self) -> None:
+        stdio = self.kind.currentData() == "stdio"
+        for w in (self.command, self.args, self.env):
+            w.setEnabled(stdio)
+        self.url.setEnabled(not stdio)
+
+    def payload(self) -> Row:
+        out: Row = {"type": "mcp_add", "name": self.name.text().strip()}
+        if self.kind.currentData() == "http":
+            return {**out, "url": self.url.text().strip()}
+        env: dict[str, str] = {}
+        for line in self.env.toPlainText().splitlines():
+            if line.strip():
+                k, _, v = line.partition("=")
+                env[k.strip()] = v.strip()
+        return {**out, "command": self.command.text().strip(), "args": [a for a in self.args.toPlainText().splitlines() if a.strip()], "env": env}
+
+
+class McpPage(TablePage):
+    """MCP servers: add / remove, enable / disable with a look at what would run, see each server's tools and tiers, and reload.
+    Changes only take effect on reload, so every row says whether it is waiting for one."""
+
+    JOB_LIMIT_MS = 180_000  # unlock anyway if the daemon never answers
+
+    def __init__(self, send: Send) -> None:
+        self._job: int | None = None
+        self._reload_needed = False
+
+        def enable(row: Row) -> Row | None:
+            if not _confirm(("Enable server", "Bật máy chủ"), (
+                    f"Enable '{row['name']}'? After the next reload the agent will " + _mcp_what(row) + "\n\nIts tools ask for your approval unless mcp.yaml says otherwise.",
+                    f"Bật '{row['name']}'? Sau lần tải lại tiếp theo, agent sẽ " + _mcp_what(row) + "\n\nCông cụ của nó sẽ hỏi bạn duyệt trừ khi mcp.yaml quy định khác.")):
+                return None
+            return {"type": "mcp_set", "name": row["name"], "enabled": True}
+
+        def disable(row: Row) -> Row | None:
+            n = len(row.get("tools") or [])
+            if not _confirm(("Disable server", "Tắt máy chủ"), (
+                    f"Disable '{row['name']}'? Its {n} tool(s) are removed from the agent after the next reload.",
+                    f"Tắt '{row['name']}'? {n} công cụ của nó sẽ bị gỡ khỏi agent sau lần tải lại tiếp theo.")):
+                return None
+            return {"type": "mcp_set", "name": row["name"], "enabled": False}
+
+        def tools(row: Row) -> Row | None:
+            self._show_tools(row)
+            return None
+
+        def remove(row: Row) -> Row | None:
+            if not _confirm(("Remove server", "Xóa máy chủ"), (
+                    f"Remove '{row['name']}' from mcp.yaml? Its tools disappear after the next reload.",
+                    f"Xóa '{row['name']}' khỏi mcp.yaml? Công cụ của nó sẽ biến mất sau lần tải lại tiếp theo.")):
+                return None
+            return {"type": "mcp_remove", "name": row["name"]}
+
+        enable.applies = lambda r: not r.get("enabled")  # type: ignore[attr-defined]
+        disable.applies = lambda r: bool(r.get("enabled"))  # type: ignore[attr-defined]
+        super().__init__(send, {"type": "mcp_list"}, "mcp", lambda e: [{"name": n, **v} for n, v in e["servers"].items()],
+                         [("Server", "Máy chủ", lambda r: r["name"]),
+                          ("Type", "Loại", lambda r: tr("URL", "URL") if r.get("kind") == "http" else tr("Command", "Lệnh")),
+                          ("Runs / connects to", "Chạy / kết nối", lambda r: r.get("target", "")),
+                          ("Enabled", "Bật", lambda r: tr("Yes", "Có") if r.get("enabled") else tr("No", "Không")),
+                          ("Status", "Trạng thái", lambda r: r.get("status", "") + (tr("  ⟳ reload needed", "  ⟳ cần tải lại") if r.get("reload_needed") else "")),
+                          ("Tools", "Công cụ", lambda r: len(r.get("tools") or []))],
+                         [("Enable", "Bật", enable), ("Disable", "Tắt", disable), ("Tools", "Công cụ", tools), ("Remove", "Xóa", remove)],
+                         wide=2, searchable=True,
+                         empty=("No MCP servers yet. Use Add server…, or edit mcp.yaml in the data folder.",
+                                "Chưa có máy chủ MCP nào. Dùng Thêm máy chủ…, hoặc sửa mcp.yaml trong thư mục dữ liệu."))
+        lay: QVBoxLayout = self.layout()  # type: ignore[assignment]
+        row = QHBoxLayout()
+        self.add_btn, self.reload_btn = QPushButton(), QPushButton()
+        self.add_btn.clicked.connect(self._add)
+        self.reload_btn.clicked.connect(self._reload)
+        row.addWidget(self.add_btn)
+        row.addWidget(self.reload_btn)
+        self.state = QLabel()
+        row.addWidget(self.state, 1)
+        lay.insertLayout(1, row)
+        self.output = QPlainTextEdit()
+        self.output.setReadOnly(True)
+        self.output.setMaximumHeight(130)
+        lay.addWidget(self.output)
+        self.retranslate()
+
+    def retranslate(self) -> None:
+        super().retranslate()
+        if not hasattr(self, "output"):
+            return
+        self.add_btn.setText(tr("Add server…", "Thêm máy chủ…"))
+        self.reload_btn.setText(tr("Reload MCP", "Tải lại MCP"))
+        self.output.setPlaceholderText(tr("Tools of a server and reload results appear here.", "Công cụ của máy chủ và kết quả tải lại hiện ở đây."))
+        for w, en, vi in ((self.add_btn, "Add an MCP server (stored disabled)", "Thêm máy chủ MCP (lưu ở trạng thái tắt)"),
+                          (self.reload_btn, "Apply the changes: reconnect every enabled server", "Áp dụng thay đổi: kết nối lại mọi máy chủ đang bật"),
+                          (self.output, "Server tools and reload results", "Công cụ của máy chủ và kết quả tải lại")):
+            w.setToolTip(tr(en, vi))
+            w.setAccessibleName(tr(en, vi))
+        self._sync_state()
+
+    def _sync_state(self) -> None:
+        busy = self._job is not None
+        self.add_btn.setEnabled(not busy)
+        self.reload_btn.setEnabled(not busy)
+        self.reload_btn.setText(tr("Reloading…", "Đang tải lại…") if busy else tr("Reload MCP", "Tải lại MCP"))
+        self.state.setText(tr("Reconnecting to the servers… this can take a while.", "Đang kết nối lại các máy chủ… có thể mất một lúc.") if busy else
+                           tr("⚠ Changes are not applied yet: reload MCP.", "⚠ Thay đổi chưa được áp dụng: hãy tải lại MCP.") if self._reload_needed else
+                           tr("Up to date.", "Đã cập nhật."))
+
+    def load(self, ev: Row) -> bool:
+        ok = super().load(ev)
+        if ok:
+            self._reload_needed = bool(ev.get("reload_needed"))
+            if ev.get("reloaded"):
+                self.finish(ev.get("rid"))
+                self.output.setPlainText("\n".join(f"{n}: {v.get('status', '')}" for n, v in ev["servers"].items()))
+            self._sync_state()
+        return ok
+
+    def finish(self, rid: Any) -> bool:
+        if rid is not None and rid == self._job:
+            self._job = None
+            self._sync_state()
+            return True
+        return False
+
+    def settle(self, rid: Any) -> bool:
+        return self.finish(rid) or super().settle(rid)
+
+    def _show_tools(self, row: Row) -> None:
+        lines = [f"{row['name']}: {row.get('status', '')}"]
+        for t in row.get("tools") or []:
+            lines.append(f"  [{t['tier']}] {t['name']}" + ("  ⚠ " + tr("runs without approval", "chạy không cần duyệt") if t["tier"] == "T0" else ""))
+        for t in row.get("skipped") or []:
+            lines.append(f"  ✗ {t['name']}: {t['reason']}")
+        if len(lines) == 1:
+            lines.append("  " + tr("No tools loaded.", "Chưa có công cụ nào được nạp."))
+        self.output.setPlainText("\n".join(lines))
+
+    def _add(self) -> None:
+        dlg = AddServerDialog(self)
+        if dlg.exec() == QDialog.DialogCode.Accepted:
+            self._send({**dlg.payload(), "rid": next(_rids)})
+
+    def _reload(self) -> None:
+        names = [f"• {r['name']}: {r.get('target', '')}" for r in self.rows if r.get("enabled")]
+        listing = "\n".join(names) or tr("(no enabled servers)", "(không có máy chủ nào đang bật)")
+        if _confirm(("Reload MCP", "Tải lại MCP"), (
+                "Reconnect every enabled server? Local commands are started and remote URLs are contacted:\n\n" + listing,
+                "Kết nối lại mọi máy chủ đang bật? Các lệnh cục bộ sẽ được chạy và các URL từ xa sẽ được kết nối:\n\n" + listing)):
+            rid = self._job = next(_rids)
+            self._sync_state()
+            QTimer.singleShot(self.JOB_LIMIT_MS, lambda: self.finish(rid))
+            self._send({"type": "mcp_reload", "rid": rid})
+
+
 class UsagePage(QWidget):
     def __init__(self, send: Send) -> None:
         super().__init__()
@@ -523,11 +724,7 @@ class ManagerWindow(QTabWidget):
                 wide=3, searchable=True, facet=("Status", "Trạng thái", lambda r: r["status"]),
                 empty=("No memories yet. The agent saves them as you chat.", "Chưa có bộ nhớ nào. Agent sẽ lưu khi bạn trò chuyện."))
         rag = DocumentsPage(send)
-        mcp = P(send, {"type": "mcp_list"}, "mcp", lambda e: [{"name": n, **v} for n, v in e["servers"].items()],
-                [("Server", "Máy chủ", lambda r: r["name"]), ("Enabled", "Bật", lambda r: r.get("enabled", "")), ("Status", "Trạng thái", lambda r: r.get("status", ""))],
-                [("Enable", "Bật", lambda r: {"type": "mcp_set", "name": r["name"], "enabled": True}),
-                 ("Disable", "Tắt", lambda r: {"type": "mcp_set", "name": r["name"], "enabled": False})],
-                [("Reload MCP", "Tải lại MCP", {"type": "mcp_reload"})])
+        mcp = McpPage(send)
         sch = P(send, {"type": "schedules"}, "schedules", lambda e: e["items"],
                 [("ID", "ID", lambda r: r["id"]), ("Enabled", "Bật", lambda r: r["enabled"]), ("Every (s)", "Mỗi (giây)", lambda r: r["every_s"]),
                  ("Last status", "Kết quả gần nhất", lambda r: r["last_status"]), ("Task", "Tác vụ", lambda r: r["prompt"])],
@@ -551,7 +748,7 @@ class ManagerWindow(QTabWidget):
         # (event type) -> page key; mutations re-request the list they changed
         self._route = {"memory": "memory", "rag": "rag", "mcp": "mcp", "schedules": "schedules", "rules": "rules", "audit": "audit",
                        "usage": "usage", "policy": "policy"}
-        self._after = {"memory_updated": "memory", "memory_deleted": "memory", "mcp_set": "mcp", "schedule_cancel": "schedules", "rag_synced": "rag", "rag_added": "rag", "rag_removed": "rag"}
+        self._after = {"memory_updated": "memory", "memory_deleted": "memory", "mcp_set": "mcp", "schedule_cancel": "schedules", "rag_synced": "rag", "rag_added": "rag", "rag_removed": "rag", "mcp_added": "mcp", "mcp_removed": "mcp"}
         self._note = ""  # shown once, after the list that follows a change has loaded
         self.status.setAlignment(Qt.AlignmentFlag.AlignRight)
         for w, _en, _vi in self._tabs:
@@ -590,6 +787,14 @@ class ManagerWindow(QTabWidget):
             if ev.get("status") == "proposed":
                 return tr("Saved. It looks sensitive, so it is waiting for your approval.", "Đã lưu. Nội dung có vẻ nhạy cảm nên đang chờ bạn duyệt.")
             return tr("Saved.", "Đã lưu.")
+        if t == "mcp_set":
+            return tr("Saved. Reload MCP to apply the change.", "Đã lưu. Hãy tải lại MCP để áp dụng.") if ok \
+                else "⚠ " + tr("That server no longer exists.", "Máy chủ này không còn tồn tại.")
+        if t == "mcp_added":
+            return tr("Server added (disabled). Review it, enable it, then reload.", "Đã thêm máy chủ (đang tắt). Hãy xem lại, bật rồi tải lại.")
+        if t == "mcp_removed":
+            return tr("Removed. Reload MCP to apply.", "Đã xóa. Hãy tải lại MCP để áp dụng.") if ok \
+                else "⚠ " + tr("That server no longer exists.", "Máy chủ này không còn tồn tại.")
         if t == "rag_removed":
             return tr("Removed from the index (the file is untouched).", "Đã xóa khỏi chỉ mục (tệp gốc giữ nguyên).") if ev.get("chunks") \
                 else tr("That document was already gone from the index.", "Tài liệu này không còn trong chỉ mục.")
@@ -602,6 +807,9 @@ class ManagerWindow(QTabWidget):
     def on_event(self, ev: Row) -> bool:
         """Feed a daemon event; returns True if a page consumed it."""
         t = ev.get("type", "")
+        if t == "mcp" and ev.get("reloaded"):
+            bad = sum(1 for v in ev["servers"].values() if str(v.get("status", "")).startswith("error"))
+            self._note = ("⚠ " if bad else "") + tr(f"Reloaded: {len(ev['servers']) - bad} ok, {bad} failed.", f"Đã tải lại: {len(ev['servers']) - bad} ổn, {bad} lỗi.")
         if t in self._route:
             if self.pages[self._route[t]][0].load(ev) is not False:  # type: ignore[attr-defined]
                 self.status.setText(self._note)

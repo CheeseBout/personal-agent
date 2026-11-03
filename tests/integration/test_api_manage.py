@@ -9,8 +9,9 @@ from test_api_hitl import app_client, connect, types, until
 from fakes import FakeBrain, ScriptedModel, answer, call
 from personal_agent import services
 from personal_agent.settings.settings import data_dir
+from personal_agent.tools.registry import meta_for
 
-DONE = {"memory", "memory_updated", "memory_deleted", "rag", "rag_synced", "rag_added", "rag_removed", "rag_results", "mcp", "mcp_set", "schedules", "schedule_cancel",
+DONE = {"memory", "memory_updated", "memory_deleted", "rag", "rag_synced", "rag_added", "rag_removed", "rag_results", "mcp", "mcp_set", "mcp_added", "mcp_removed", "schedules", "schedule_cancel",
         "error", "approvals", "final", "paused", "schedule_run", "killed", "kill_released"}
 
 
@@ -106,14 +107,40 @@ def test_mcp_page_toggle_and_reload(env: Path, tmp_path: Path) -> None:
     (data_dir() / "mcp.yaml").write_text(yaml.safe_dump({"servers": {"demo": {"command": sys.executable, "args": [server]}}}), encoding="utf-8")
     with app_client(tmp_path, answer("x")) as c:
         ws = connect(c)
-        assert ask(ws, {"type": "mcp_list"})["servers"]["demo"] == {"enabled": True, "status": "ok (3 tools)"}  # loaded at startup
+        demo = ask(ws, {"type": "mcp_list"})["servers"]["demo"]  # loaded at startup
+        assert demo["enabled"] is True and demo["status"] == "ok (3 tools)" and demo["kind"] == "stdio" and not demo["reload_needed"]
+        assert {t["name"] for t in demo["tools"]} == {"demo_echo", "demo_add", "demo_whoami_env"} and all(t["tier"] == "T2" for t in demo["tools"])
         assert ask(ws, {"type": "mcp_set", "name": "demo", "enabled": False})["ok"] is True
+        assert ask(ws, {"type": "mcp_list"})["servers"]["demo"]["reload_needed"] is True  # saved, not applied yet
         assert ask(ws, {"type": "mcp_set", "name": "nope", "enabled": True})["ok"] is False
         assert ask(ws, {"type": "mcp_reload"})["servers"]["demo"]["status"] == "disabled"
         assert ask(ws, {"type": "mcp_set", "name": "demo", "enabled": True})["reload_needed"] is True
         assert ask(ws, {"type": "mcp_reload"})["servers"]["demo"]["status"].startswith("ok")
+        assert ask(ws, {"type": "mcp_list"})["reload_needed"] is False  # a reload clears it
         ws.send_json({"text": "still works after the graph was rebuilt", "thread_id": "t"})
         assert until(ws, DONE)[-1]["type"] == "final"
+
+
+def test_mcp_page_add_remove_validate_and_survive_a_broken_config(env: Path, tmp_path: Path) -> None:
+    server = str(Path(__file__).parents[1] / "mcp_echo_server.py")
+    with app_client(tmp_path, answer("x")) as c:
+        ws = connect(c)
+        assert ask(ws, {"type": "mcp_list"})["servers"] == {}
+        added = ask(ws, {"type": "mcp_add", "name": "demo", "command": sys.executable, "args": [server], "env": {}})
+        assert added["type"] == "mcp_added" and added["reload_needed"] is True
+        listed = ask(ws, {"type": "mcp_list"})["servers"]["demo"]
+        assert listed["enabled"] is False and listed["reload_needed"] is True and listed["target"].startswith(sys.executable)  # stored disabled
+        for bad in ({"name": "demo", "url": "http://x"}, {"name": "bad name!", "url": "http://x"}, {"name": "u", "url": "ftp://x"},
+                    {"name": "u"}, {"name": "u", "command": "x", "url": "http://x"}):
+            assert ask(ws, {"type": "mcp_add", **bad})["type"] == "error"
+        assert ask(ws, {"type": "mcp_set", "name": "demo", "enabled": True})["ok"] is True
+        assert ask(ws, {"type": "mcp_reload"})["servers"]["demo"]["status"].startswith("ok")
+        good = (data_dir() / "mcp.yaml").read_text(encoding="utf-8")
+        (data_dir() / "mcp.yaml").write_text("servers: [unclosed", encoding="utf-8")  # broken by hand
+        assert ask(ws, {"type": "mcp_reload"})["type"] == "error"
+        assert meta_for("demo_echo") is not None  # the working tools were not torn down
+        (data_dir() / "mcp.yaml").write_text(good, encoding="utf-8")
+        assert ask(ws, {"type": "mcp_remove", "name": "demo"})["ok"] is True and ask(ws, {"type": "mcp_remove", "name": "demo"})["ok"] is False
 
 
 def test_schedule_page(tmp_path: Path) -> None:
