@@ -39,6 +39,7 @@ from personal_agent.ui.settings_dialog import FirstRunWizard, SettingsDialog
 from personal_agent.ui.skin import draw_builtin, load_skin, skins_root
 from personal_agent.ui.system import Hotkeys
 from personal_agent.ui.theme import apply as apply_theme
+from personal_agent.ui.theme import set_highlight
 from personal_agent.ui.voice_io import Recorder, Speaker
 
 PROVIDER_KEYS = ("ANTHROPIC_API_KEY", "GOOGLE_API_KEY", "OPENAI_API_KEY", "OPENROUTER_API_KEY")
@@ -97,6 +98,8 @@ class UiApp:
         c.connected.connect(self.on_connected)
         c.disconnected.connect(self.on_disconnected)
         self.chat.submitted.connect(self.send_user)
+        self.chat.navigate.connect(self.navigate)
+        self.manager.navigate_out.connect(self.navigate)
         self.chat.stop_requested.connect(self.kill)
         self.chat.resume_requested.connect(lambda: self.client.send({"type": "release_kill"}))
         self.chat.quit_requested.connect(self.quit)
@@ -106,6 +109,7 @@ class UiApp:
         self.settings.ui_changed.connect(lambda: c.send({"type": "settings_get"}))
         self.avatar.single_clicked.connect(lambda: self.quick.open_at(self.avatar))
         self.avatar.double_clicked.connect(self.show_chat)
+        self.avatar.drag_started.connect(self.quick.close_if_empty)
         self.avatar.menu_requested.connect(self.open_radial)
         self.avatar.files_dropped.connect(lambda paths: self.quick.open_at(self.avatar, paths))
         self.bubble.clicked.connect(self._bubble_clicked)
@@ -225,6 +229,8 @@ class UiApp:
             self.approvals.refresh()
             new = set(self.session.approvals) - before
             self.approval_action.setText(tr("Approvals ({n})", "Phê duyệt ({n})", n=len(self.session.approvals)))
+            for rail in (self.chat.rail, self.manager.rail):
+                rail.set_badge(len(self.session.approvals))
             if new:
                 tool = self.session.approvals[min(new)]["tool"]
                 self.say(tr("Needs your approval: {t}", "Cần bạn duyệt: {t}", t=tool), sticky=True)
@@ -302,11 +308,13 @@ class UiApp:
         self.chat.retranslate()
         self.tray.setToolTip(n)
         self.avatar.set_label(n)
+        self.manager.rail.set_name(n)
         self.approvals.setWindowTitle(f"{n} — {tr('Approvals', 'Phê duyệt')}")
 
     def apply_ui(self) -> None:
         u = self.cfg.ui
         set_language(u.language)
+        set_highlight(self.qapp, u.highlight)
         for w in (self.chat, self.manager, self.settings, self.quick):
             w.retranslate()
         self.avatar.set_scale(u.avatar_scale)
@@ -400,6 +408,10 @@ class UiApp:
         self.chat.raise_()
         self.chat.activateWindow()
         self.chat.composer.setFocus()
+
+    def navigate(self, key: str) -> None:
+        """A sidebar item was clicked in the chat or manager window."""
+        {"chat": self.show_chat, "approvals": self.show_approvals, "settings": self.show_settings}.get(key, lambda: self.manager.open_page(key))()
 
     def show_approvals(self) -> None:
         self.approvals.refresh()

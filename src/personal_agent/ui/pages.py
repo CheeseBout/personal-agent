@@ -7,7 +7,7 @@ import time
 from collections.abc import Callable
 from typing import Any
 
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtWidgets import (
     QComboBox,
     QDialog,
@@ -23,15 +23,16 @@ from PySide6.QtWidgets import (
     QPlainTextEdit,
     QProgressBar,
     QPushButton,
+    QStackedWidget,
     QTableWidget,
     QTableWidgetItem,
-    QTabWidget,
     QVBoxLayout,
     QWidget,
 )
 
 from personal_agent.rag.loaders import SUPPORTED
 from personal_agent.ui.i18n import tr
+from personal_agent.ui.nav import NavRail, top_bar
 
 Send = Callable[[dict[str, Any]], Any]
 Row = dict[str, Any]
@@ -710,10 +711,14 @@ class PolicyPage(QWidget):
         self.status.setText(tr("Saved.", "Đã lưu.") if ev.get("saved") else "")
 
 
-class ManagerWindow(QTabWidget):
+class ManagerWindow(QWidget):
+    """Sidebar navigation (collapsible with the hamburger) plus one page at a time."""
+
+    navigate_out = Signal(str)  # a sidebar item that is not a page here: chat, approvals or settings
+
     def __init__(self, send: Send) -> None:
         super().__init__()
-        self.resize(900, 560)
+        self.resize(1080, 600)
         self.pages: dict[str, tuple[QWidget, str]] = {}
         self.status = QLabel()
         P = TablePage
@@ -741,10 +746,25 @@ class ManagerWindow(QTabWidget):
             ("schedules", "Schedules", "Lịch chạy", sch), ("rules", "Remembered approvals", "Quy tắc đã nhớ", rules),
             ("audit", "Audit log", "Nhật ký kiểm toán", audit), ("usage", "Usage", "Mức dùng", self.usage), ("policy", "Policy", "Chính sách", self.policy)]
         self._tabs: list[tuple[QWidget, str, str]] = []
+        self.stack = QStackedWidget()
         for key, en, vi, w in specs:
-            self.addTab(w, en)
+            self.stack.addWidget(w)
             self.pages[key] = (w, en)
             self._tabs.append((w, en, vi))
+        self.rail = NavRail("memory")
+        self.rail.navigate.connect(self._navigate)
+        self.page_title = QLabel()
+        bar = top_bar(self, self.page_title)
+        bar.layout().addWidget(self.status)  # type: ignore[union-attr]
+        shell = QHBoxLayout(self)
+        shell.setContentsMargins(0, 0, 0, 0)
+        shell.setSpacing(0)
+        shell.addWidget(self.rail)
+        col = QVBoxLayout()
+        col.setSpacing(0)
+        col.addWidget(bar)
+        col.addWidget(self.stack, 1)
+        shell.addLayout(col, 1)
         # (event type) -> page key; mutations re-request the list they changed
         self._route = {"memory": "memory", "rag": "rag", "mcp": "mcp", "schedules": "schedules", "rules": "rules", "audit": "audit",
                        "usage": "usage", "policy": "policy"}
@@ -754,24 +774,36 @@ class ManagerWindow(QTabWidget):
         for w, _en, _vi in self._tabs:
             if isinstance(w, TablePage):
                 w.note = self.status.setText
-        self.currentChanged.connect(lambda _i: self._refresh_current())
-        self.setCornerWidget(self.status)
+        self.stack.currentChanged.connect(lambda _i: self._refresh_current())
         self.retranslate()
 
     def retranslate(self) -> None:
         self.setWindowTitle(tr("Manager", "Quản lý"))
-        for i, (w, en, vi) in enumerate(self._tabs):
-            self.setTabText(i, tr(en, vi))
+        self.rail.retranslate()
+        for w, _en, _vi in self._tabs:
             if hasattr(w, "retranslate"):
                 w.retranslate()
+        self._show_title()
+
+    def _show_title(self) -> None:
+        for w, en, vi in self._tabs:
+            if w is self.stack.currentWidget():
+                self.page_title.setText(tr(en, vi))
 
     def _refresh_current(self) -> None:
-        w = self.currentWidget()
-        if hasattr(w, "refresh"):
-            w.refresh()
+        if refresh := getattr(self.stack.currentWidget(), "refresh", None):
+            refresh()
+
+    def _navigate(self, key: str) -> None:
+        if key in self.pages:
+            self.open_page(key)
+        else:
+            self.navigate_out.emit(key)
 
     def open_page(self, key: str) -> None:
-        self.setCurrentWidget(self.pages[key][0])
+        self.stack.setCurrentWidget(self.pages[key][0])
+        self.rail.set_current(key)
+        self._show_title()
         self._refresh_current()
         self.show()
         self.raise_()

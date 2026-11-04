@@ -1,5 +1,8 @@
 """Radial menu: a ring of slots drawn around the avatar (opened with the right mouse button).
 
+Drawn from the same theme tokens as every window: surface-coloured slots, the user's highlight colour for hover and
+focus, a filled red slot while a dangerous action is armed. Mouse, number keys 1-9 and the arrow keys + Enter all work.
+
 A frameless translucent popup, so Qt closes it on any click outside and it never touches the avatar's own mouse handling
 (drag, snap, headpat). A slot either runs an action, opens a sub-ring (the last slot of a sub-ring goes back), or - for a
 dangerous action - needs a second click. `slot_at` is pure geometry and tested without Qt.
@@ -16,7 +19,7 @@ from PySide6.QtGui import QColor, QFont, QKeyEvent, QMouseEvent, QPainter, QPain
 from PySide6.QtWidgets import QApplication, QWidget
 
 from personal_agent.ui.i18n import tr
-from personal_agent.ui.theme import AVATAR_INK, STATE
+from personal_agent.ui.theme import on_color, tok
 
 THICK = 70  # ring width in pixels
 GAP_DEG = 2.0  # visual gap between slots
@@ -137,6 +140,13 @@ class RadialMenu(QWidget):
             self.choose(len(self.items) - 1) if len(self._stack) > 1 else self.close()
         elif Qt.Key.Key_1 <= e.key() <= Qt.Key.Key_9 and (i := e.key() - Qt.Key.Key_1) < len(self.items):
             self.choose(i)  # number keys pick a slot, clockwise from the top
+        elif e.key() in (Qt.Key.Key_Right, Qt.Key.Key_Down, Qt.Key.Key_Left, Qt.Key.Key_Up):
+            n = len(self.items)
+            forward = e.key() in (Qt.Key.Key_Right, Qt.Key.Key_Down)
+            self._hover = (0 if forward else n - 1) if self._hover is None else (self._hover + (1 if forward else -1)) % n
+            self.update()
+        elif e.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter, Qt.Key.Key_Space) and self._hover is not None:
+            self.choose(self._hover)
 
     def hideEvent(self, e: object) -> None:
         super().hideEvent(e)  # type: ignore[arg-type]
@@ -161,34 +171,62 @@ class RadialMenu(QWidget):
         items = self.items
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        surface, ink, muted, accent = tok("surface"), tok("ink"), tok("muted"), tok("accent")
         for i, item in enumerate(items):
             armed, hover = item is self._armed, i == self._hover
-            base = QColor(STATE["error"] if item.danger else AVATAR_INK)
-            base.setAlpha(235 if hover or armed else 215)
-            fill = QColor(STATE["error"]) if armed else QColor(STATE["idle"]) if hover and not item.danger else base
-            p.setBrush(fill)
             on = bool(item.active and item.active())
-            p.setPen(QPen(QColor(STATE["success"]), 3) if on else QPen(QColor(255, 255, 255, 60), 1))
+            danger = item.danger or armed
+            if armed:
+                fill, text, edge = tok("critical"), on_color(tok("critical")), QPen(Qt.PenStyle.NoPen)
+            elif hover:
+                fill, text, edge = accent, tok("on_accent"), QPen(Qt.PenStyle.NoPen)
+            elif on:
+                fill, text, edge = tok("accent_soft"), ink, QPen(QColor(accent), 2)
+            else:
+                fill, text = surface, tok("critical") if danger else ink
+                edge = QPen(QColor(tok("critical")) if danger else _alpha(muted, 90), 1)
+            p.setBrush(_alpha(fill, 246))
+            p.setPen(edge)
             p.drawPath(self._sector(i, len(items)))
             c = self.slot_center(i)
-            p.setPen(QColor("white"))
+            p.setPen(QColor(text))
             f = QFont(self.font())
-            f.setPointSizeF(17)
-            p.setFont(f)
-            p.drawText(QRectF(c.x() - 40, c.y() - 28, 80, 30), Qt.AlignmentFlag.AlignCenter, item.glyph)
+            g = QFont(self.font())
+            g.setFamilies(["Segoe UI Symbol", "Segoe UI"])  # monochrome glyphs, so they take the slot's text colour
+            g.setPointSizeF(15)
+            p.setFont(g)
+            p.drawText(QRectF(c.x() - 40, c.y() - 27, 80, 26), Qt.AlignmentFlag.AlignCenter, item.glyph + "︎")  # VS15: text, not colour emoji
             f.setPointSizeF(8.5)
+            f.setWeight(QFont.Weight.DemiBold)
             p.setFont(f)
-            text = tr("Click again", "Bấm lần nữa") if armed else item.text()
-            p.drawText(QRectF(c.x() - 40, c.y() + 2, 80, 28), int(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop | Qt.TextFlag.TextWordWrap), text)
-            if item.badge and (n := item.badge()) > 0:
-                a = math.radians(i * 360 / len(items))
+            label = tr("Click again", "Bấm lần nữa") if armed else item.text() + (" ›" if item.children is not None else "")
+            p.drawText(QRectF(c.x() - 40, c.y() + 1, 80, 30), int(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop | Qt.TextFlag.TextWordWrap), label)
+            a = math.radians(i * 360 / len(items))
+            if i < 9:  # the number key that picks this slot
+                f.setPointSizeF(7)
+                f.setWeight(QFont.Weight.Normal)
+                p.setFont(f)
+                p.setPen(_alpha(text, 150))
+                r = self._r_out - 9
+                p.drawText(QRectF(self._centre.x() + r * math.sin(a) - 8, self._centre.y() - r * math.cos(a) - 8, 16, 16), Qt.AlignmentFlag.AlignCenter, str(i + 1))
+            if item.badge and (n := item.badge()) > 0:  # same badge as the sidebar's, inverted while the slot is highlighted
                 bx, by = c.x() + 30 * math.sin(a + 0.5), c.y() - 30 * math.cos(a + 0.5)
-                p.setBrush(QColor(STATE["awaiting_approval"]))
+                p.setBrush(QColor(tok("on_accent") if hover else accent))
                 p.setPen(Qt.PenStyle.NoPen)
                 p.drawEllipse(QPointF(bx, by), 10, 10)
-                p.setPen(QColor("white"))
+                p.setPen(QColor(accent if hover else tok("on_accent")))
                 f.setPointSizeF(8)
                 f.setBold(True)
                 p.setFont(f)
                 p.drawText(QRectF(bx - 10, by - 10, 20, 20), Qt.AlignmentFlag.AlignCenter, str(min(n, 99)))
+        # a thin highlight-coloured frame around the avatar, like the logo's halo
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        p.setPen(QPen(_alpha(accent, 170), 2))
+        p.drawEllipse(self._centre, self._r_in - 4, self._r_in - 4)
         p.end()
+
+
+def _alpha(color: str, a: int) -> QColor:
+    c = QColor(color)
+    c.setAlpha(a)
+    return c

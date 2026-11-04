@@ -1,7 +1,8 @@
 """One visual system for every window: colour tokens (light and dark), fonts and the global stylesheet.
 
-Design: a quiet instrument panel. Cool slate surfaces, ink text, one deep-teal accent for the primary action and focus.
-The only loud colour is the risk scale (low, medium, high, critical); it means the same thing on approval cards, diffs,
+Design: a quiet instrument panel. Neutral surfaces (cool fog in light, true black in dark), ink text and ONE highlight colour
+the user picks in Settings (default orange): the logo, badges, primary buttons, selection and focus all follow it.
+The risk scale (low, medium, high, critical) and the avatar state colours keep their own fixed meaning on approval cards, diffs,
 the speech bubble and the screen-watching badge. Widgets read tokens through `tok()`; nothing else hard-codes a colour.
 """
 
@@ -11,15 +12,14 @@ from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor, QFont, QPalette
 from PySide6.QtWidgets import QApplication
 
+DEFAULT_HIGHLIGHT = "#E8742F"
 LIGHT = {
-    "bg": "#ECEFF3", "surface": "#FFFFFF", "sunken": "#F5F7F9", "ink": "#18202E", "muted": "#586377", "line": "#D2D9E1",
-    "accent": "#0F6B63", "accent_hover": "#0B554F", "on_accent": "#FFFFFF", "accent_soft": "#DCEEEC",
-    "low": "#2C7A4B", "medium": "#9A6A0B", "high": "#BF4E1B", "critical": "#B1232B",
-    "add": "#1F7A45", "del": "#B1232B", "hunk": "#2B5CA8",
+    "bg": "#E3E8EC", "surface": "#F7F9FA", "sunken": "#EDF1F3", "ink": "#101A33", "muted": "#566280", "line": "#C9D1D9",
+    "low": "#1F7A4D", "medium": "#8F6208", "high": "#B94A14", "critical": "#B1232B",
+    "add": "#1F7A4D", "del": "#B1232B", "hunk": "#2B5CA8",
 }
 DARK = {
-    "bg": "#111519", "surface": "#1A2027", "sunken": "#151A20", "ink": "#E5E9EF", "muted": "#8E9BAE", "line": "#2B3440",
-    "accent": "#4FC2B3", "accent_hover": "#73D3C6", "on_accent": "#0B1A18", "accent_soft": "#17332F",
+    "bg": "#0A0A0A", "surface": "#151515", "sunken": "#0F0F0F", "ink": "#ECECEC", "muted": "#9B9B9B", "line": "#2A2A2A",
     "low": "#58C282", "medium": "#E0B04A", "high": "#F08A56", "critical": "#F2777D",
     "add": "#58C282", "del": "#F2777D", "hunk": "#7FA6E8",
 }
@@ -28,9 +28,41 @@ STATE = {"idle": "#5B8DEF", "listening": "#3FB7C9", "thinking": "#9B7FE0", "work
          "awaiting_approval": "#E8742F", "success": "#2FB59A", "error": "#E0525B", "sleeping": "#7C879B"}
 AVATAR_INK = "#1B2230"
 
-_cur: dict[str, str] = LIGHT
 HEAD_FONT = '"Bahnschrift", "Segoe UI Variable Display", "Segoe UI"'
-BODY_FONT = '"Segoe UI Variable Text", "Segoe UI"'
+BODY_FONT = '"Be Vietnam Pro", "Segoe UI Variable Text", "Segoe UI"'
+
+
+def _rgb(h: str) -> tuple[int, int, int]:
+    return int(h[1:3], 16), int(h[3:5], 16), int(h[5:7], 16)
+
+
+def mix(a: str, b: str, t: float) -> str:
+    """`t` of colour `a` over `b` (both #rrggbb)."""
+    r, g, bl = (round(x * t + y * (1 - t)) for x, y in zip(_rgb(a), _rgb(b), strict=True))
+    return f"#{r:02X}{g:02X}{bl:02X}"
+
+
+def _lum(h: str) -> float:
+    c = [v / 255 for v in _rgb(h)]
+    c = [v / 12.92 if v <= 0.03928 else ((v + 0.055) / 1.055) ** 2.4 for v in c]
+    return 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]
+
+
+def on_color(h: str) -> str:
+    """Text colour (near-black or white) that contrasts more with `h`."""
+    return "#111111" if (_lum(h) + 0.05) / 0.05 > 1.05 / (_lum(h) + 0.05) else "#FFFFFF"
+
+
+def tokens(dark: bool, highlight: str = DEFAULT_HIGHLIGHT) -> dict[str, str]:
+    """The base palette plus every accent token derived from the user's highlight colour."""
+    t = dict(DARK if dark else LIGHT)
+    t.update(accent=highlight, accent_hover=mix(highlight, "#000000", 0.82), on_accent=on_color(highlight),
+             accent_soft=mix(highlight, t["surface"], 0.2 if dark else 0.16), accent_text=mix(highlight, t["ink"], 0.6))
+    return t
+
+
+_cur: dict[str, str] = tokens(False)
+_hl = DEFAULT_HIGHLIGHT
 
 
 def tok(name: str) -> str:
@@ -59,14 +91,14 @@ QWidget {{ background: {t['bg']}; color: {t['ink']}; }}
 QToolTip {{ background: {t['ink']}; color: {t['surface']}; border: none; padding: 5px 8px; }}
 QLabel {{ background: transparent; }}
 QLabel[role="title"] {{ font-family: {HEAD_FONT}; font-size: 12pt; font-weight: 600; }}
-QLabel[role="chip"] {{ color: {t['accent']}; }}
+QLabel[role="chip"] {{ color: {t['accent_text']}; }}
 QLabel[role="warn"] {{ color: {t['high']}; }}
 QLabel[role="error"] {{ color: {t['critical']}; }}
 
 QPushButton {{ background: {t['surface']}; border: 1px solid {t['line']}; border-radius: 6px; padding: 6px 14px; min-height: 18px; }}
 QPushButton:hover {{ border-color: {t['muted']}; }}
 QPushButton:pressed {{ background: {t['sunken']}; }}
-QPushButton:checked {{ background: {t['accent_soft']}; border-color: {t['accent']}; color: {t['accent']}; }}
+QPushButton:checked {{ background: {t['accent_soft']}; border-color: {t['accent']}; color: {t['accent_text']}; }}
 QPushButton:disabled {{ color: {t['muted']}; background: {t['sunken']}; border-color: {t['line']}; }}
 QPushButton:focus {{ border: 2px solid {t['accent']}; padding: 5px 13px; }}
 QPushButton[role="primary"] {{ background: {t['accent']}; color: {t['on_accent']}; border-color: {t['accent']}; font-weight: 600; }}
@@ -126,6 +158,21 @@ QMenu::item {{ padding: 6px 22px; border-radius: 4px; }}
 QMenu::item:selected {{ background: {t['accent_soft']}; }}
 QMenu::separator {{ height: 1px; background: {t['line']}; margin: 4px 8px; }}
 
+QFrame#NavRail {{ background: {t['surface']}; border: none; border-right: 1px solid {t['line']}; }}
+QFrame#NavRail QLabel {{ background: transparent; }}
+QPushButton[role="nav"] {{ background: transparent; border: none; border-left: 3px solid transparent; border-radius: 6px; color: {t['muted']};
+    text-align: left; padding: 8px 12px; font-weight: 500; }}
+QPushButton[role="nav"]:hover {{ background: {t['sunken']}; color: {t['ink']}; }}
+QPushButton[role="nav"][current="true"] {{ background: {t['accent_soft']}; border-left: 3px solid {t['accent']}; color: {t['ink']}; font-weight: 600; }}
+QFrame#NavSep {{ background: {t['line']}; border: none; max-height: 1px; min-height: 1px; }}
+QFrame#TopBar {{ background: {t['bg']}; border: none; border-bottom: 1px solid {t['line']}; }}
+QToolButton#Burger {{ background: transparent; border: none; border-radius: 6px; padding: 6px; }}
+QToolButton#Burger:hover {{ background: {t['sunken']}; }}
+QToolButton#Burger:focus {{ border: 2px solid {t['accent']}; }}
+QFrame#NavRail QLabel#NavBadge {{ background: {t['accent']}; color: {t['on_accent']}; border-radius: 9px; padding: 0 6px; font-size: 8pt; font-weight: 700; }}
+QPushButton[role="swatch"] {{ border: 2px solid {t['surface']}; border-radius: 13px; min-width: 26px; max-width: 26px; min-height: 26px; max-height: 26px; padding: 0; }}
+QPushButton[role="swatch"]:checked {{ border: 2px solid {t['ink']}; }}
+
 QFrame#Paused {{ background: {t['sunken']}; border: none; border-left: 5px solid {t['critical']}; border-radius: 8px; }}
 QFrame#Paused QLabel {{ color: {t['critical']}; font-weight: 600; }}
 QWidget#QuickInput {{ background: transparent; }}
@@ -134,11 +181,17 @@ QLabel#Bubble {{ background: {t['surface']}; color: {t['ink']}; border: 1px soli
 """
 
 
-def apply(app: QApplication) -> None:
-    """Install the palette, fonts and stylesheet. Call once, right after creating the QApplication."""
-    global _cur
-    _cur = DARK if is_dark(app) else LIGHT
-    app.setStyle("Fusion")
+def highlight() -> str:
+    return _hl
+
+
+def apply(app: QApplication, highlight: str | None = None) -> None:
+    """Install the palette, fonts and stylesheet. Call right after creating the QApplication (again to change the highlight)."""
+    global _cur, _hl
+    _hl = highlight or _hl
+    _cur = tokens(is_dark(app), _hl)
+    if app.style().objectName().lower() != "fusion":  # swapping the style object again under live widgets crashes Qt
+        app.setStyle("Fusion")
     pal = QPalette()
     for role, key in ((QPalette.ColorRole.Window, "bg"), (QPalette.ColorRole.Base, "surface"), (QPalette.ColorRole.AlternateBase, "sunken"),
                       (QPalette.ColorRole.WindowText, "ink"), (QPalette.ColorRole.Text, "ink"), (QPalette.ColorRole.ButtonText, "ink"),
@@ -148,3 +201,9 @@ def apply(app: QApplication) -> None:
         pal.setColor(role, QColor(_cur[key]))
     app.setPalette(pal)
     app.setStyleSheet(stylesheet(_cur))
+
+
+def set_highlight(app: QApplication, color: str) -> None:
+    """Re-skin the running app with a new highlight colour (#rrggbb). Widgets that cached a colour update when rebuilt."""
+    if color.lower() != _hl.lower():
+        apply(app, color)

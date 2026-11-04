@@ -137,6 +137,29 @@ def test_click_vs_double_click_and_drag(qapp: QApplication) -> None:
     assert moves and clicks == [1]  # dragging is not a click
 
 
+def test_dragging_the_avatar_closes_an_empty_quick_box_but_keeps_one_with_text(qapp: QApplication) -> None:
+    a, q = AvatarWindow(Skin.default()), QuickInput()
+    a.drag_started.connect(q.close_if_empty)
+    a.show()
+    a.move(100, 100)
+    c = QPoint(a.width() // 2, a.height() // 2)
+
+    def drag() -> None:
+        QTest.mousePress(a, Qt.MouseButton.LeftButton, pos=c)
+        QTest.mouseMove(a, c + QPoint(60, 30))
+        QTest.mouseRelease(a, Qt.MouseButton.LeftButton, pos=c + QPoint(60, 30))
+
+    q.open_at(a)
+    assert q.isVisible()
+    drag()
+    assert not q.isVisible()  # opened by a click, then the avatar was dragged without typing: gone at once
+    q.open_at(a)
+    q.edit.setPlainText("half a thought")
+    drag()
+    assert q.isVisible()  # a draft is never thrown away
+    q.hide()
+
+
 def test_dropping_files_on_the_avatar_emits_their_paths(qapp: QApplication, tmp_path: Path) -> None:
     a = AvatarWindow(Skin.default())
     a.show()
@@ -472,7 +495,7 @@ def test_language_switch_retranslates_the_manager(qapp: QApplication) -> None:
     m = ManagerWindow(lambda _p: None)
     set_language("vi")
     m.retranslate()
-    assert m.tabText(0) == "Bộ nhớ" and m.windowTitle() == "Quản lý"
+    assert m.rail.buttons["memory"].text() == "Bộ nhớ" and m.page_title.text() == "Bộ nhớ" and m.windowTitle() == "Quản lý"
 
 
 # ---- settings dialog / wizard ---------------------------------------------------------------------------------------------------------------

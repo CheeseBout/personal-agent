@@ -8,8 +8,12 @@ from pathlib import Path
 from typing import Any
 
 from PySide6.QtCore import QTimer, Signal
+from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
+    QApplication,
+    QButtonGroup,
     QCheckBox,
+    QColorDialog,
     QComboBox,
     QDialog,
     QDialogButtonBox,
@@ -32,8 +36,12 @@ from PySide6.QtWidgets import (
 from personal_agent.ui import system
 from personal_agent.ui.i18n import tr
 from personal_agent.ui.skin import available_skins
+from personal_agent.ui.theme import DEFAULT_HIGHLIGHT, set_highlight
 
 Send = Callable[[dict[str, Any]], Any]
+HIGHLIGHTS = (("#E8742F", "Orange", "Cam"), ("#3340D9", "Ultramarine", "Xanh chàm"), ("#0F9D8A", "Teal", "Xanh ngọc"),
+              ("#2C9A5B", "Green", "Xanh lá"), ("#E0407B", "Pink", "Hồng"), ("#7A4DE0", "Violet", "Tím"),
+              ("#E0A21F", "Amber", "Hổ phách"), ("#D64545", "Red", "Đỏ"))
 KEY_HELP = {"ANTHROPIC_API_KEY": "Anthropic (Claude)", "GOOGLE_API_KEY": "Google (Gemini)", "OPENAI_API_KEY": "OpenAI",
             "OPENROUTER_API_KEY": "OpenRouter", "LANGFUSE_PUBLIC_KEY": "Langfuse public key",
             "LANGFUSE_SECRET_KEY": "Langfuse secret key", "LANGFUSE_BASE_URL": "Langfuse URL"}
@@ -55,7 +63,6 @@ class SettingsDialog(QDialog):
         box = QDialogButtonBox(QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Close)
         box.accepted.connect(self.save)
         box.rejected.connect(self.hide)
-        box.button(QDialogButtonBox.StandardButton.Save).clicked.connect(self.save)
         lay.addWidget(box)
         self._stats = QTimer(self)
         self._stats.timeout.connect(self._refresh_stats)
@@ -80,11 +87,34 @@ class SettingsDialog(QDialog):
         self.folder_btn = QPushButton()
         self.folder_btn.clicked.connect(self._add_folder)
         self.hotkeys = QLabel()
+        self.highlight = self._saved_highlight = DEFAULT_HIGHLIGHT
+        self.hl_names: dict[str, tuple[str, str]] = {}
+        self.hl_box = QWidget()
+        hl = QHBoxLayout(self.hl_box)
+        hl.setContentsMargins(0, 0, 0, 0)
+        self.hl_group = QButtonGroup(self)
+        self.hl_swatches: dict[str, QPushButton] = {}
+        for col, en, vi in HIGHLIGHTS:
+            self.hl_names[col] = (en, vi)
+            sw = QPushButton()
+            sw.setProperty("role", "swatch")
+            sw.setCheckable(True)
+            sw.setStyleSheet(f"background: {col};")
+            sw.clicked.connect(lambda _=False, col=col: self._set_highlight(col))
+            self.hl_group.addButton(sw)
+            self.hl_swatches[col] = sw
+            hl.addWidget(sw)
+        self.hl_custom, self.hl_reset = QPushButton(), QPushButton()
+        self.hl_custom.clicked.connect(self._pick_custom)
+        self.hl_reset.clicked.connect(lambda: self._set_highlight(DEFAULT_HIGHLIGHT))
+        hl.addWidget(self.hl_custom)
+        hl.addWidget(self.hl_reset)
+        hl.addStretch()
         self.rows_general = [("Agent name", "Tên agent", self.name), ("Interface language", "Ngôn ngữ giao diện", self.ui_lang),
                              ("Agent reply language", "Ngôn ngữ agent trả lời", self.agent_lang),
                              ("Start with Windows", "Khởi động cùng Windows", self.autostart), ("Show avatar", "Hiện avatar", self.avatar_on),
                              ("Avatar always on top", "Avatar luôn ở trên", self.on_top), ("Avatar wanders when idle", "Avatar đi dạo khi rảnh", self.wander),
-                             ("Avatar size", "Kích thước avatar", self.scale), ("Skin", "Skin", self.skin),
+                             ("Avatar size", "Kích thước avatar", self.scale), ("Skin", "Skin", self.skin), ("Highlight color", "Màu nổi bật", self.hl_box),
                              ("Folders the agent may use", "Thư mục agent được dùng", self.folder_btn), ("Hotkeys", "Phím tắt", self.hotkeys)]
         self._general_form = f
         self._labels: list[tuple[QLabel, str, str]] = []
@@ -180,10 +210,29 @@ class SettingsDialog(QDialog):
         for lbl, en, vi in self._labels + self._voice_labels + self._screen_labels:
             lbl.setText(tr(en, vi))
         self.folder_btn.setText(tr("Add a folder…", "Thêm thư mục…"))
+        for col, sw in self.hl_swatches.items():  # a colour name, not the hex code, is what a screen reader should say
+            name = tr(*self.hl_names[col])
+            sw.setToolTip(f"{name} ({col})")
+            sw.setAccessibleName(name)
+        self.hl_custom.setText(tr("Custom…", "Tùy chọn…"))
+        self.hl_reset.setText(tr("Reset", "Đặt lại"))
         self.cap_labels[0].setText(tr("Daily token cap", "Giới hạn token mỗi ngày"))
         self.cap_labels[1].setText(tr("Daily cost cap (USD)", "Giới hạn chi phí mỗi ngày (USD)"))
         for lbl, (en, vi) in zip(self.about_labels, (("This window (UI)", "Cửa sổ này (UI)"), ("Daemon", "Daemon"), ("Langfuse", "Langfuse")), strict=True):
             lbl.setText(tr(en, vi))
+
+    def _set_highlight(self, color: str, preview: bool = True) -> None:
+        """Select a highlight colour; with `preview` the whole app re-skins now, and Save makes it permanent."""
+        self.highlight = color
+        for c, b in self.hl_swatches.items():
+            b.setChecked(c.lower() == color.lower())
+        if preview:
+            set_highlight(QApplication.instance(), color)  # type: ignore[arg-type]
+
+    def _pick_custom(self) -> None:
+        c = QColorDialog.getColor(QColor(self.highlight), self, tr("Highlight color", "Màu nổi bật"))
+        if c.isValid():
+            self._set_highlight(c.name().upper())
 
     # ---- data in ---------------------------------------------------------------------------------------------------------
     def load(self, ev: dict[str, Any]) -> None:
@@ -197,6 +246,8 @@ class SettingsDialog(QDialog):
         self.wander.setChecked(ui["avatar_wander"])
         self.scale.setValue(ui["avatar_scale"])
         self.skin.setCurrentText(ui["skin"])
+        self._saved_highlight = ui.get("highlight", DEFAULT_HIGHLIGHT)
+        self._set_highlight(self._saved_highlight, preview=False)
         self.autostart.setChecked(system.autostart_enabled())
         self.hotkeys.setText("   ".join(f"{k}: {v}" for k, v in ui["hotkeys"].items()))
         st, tts = ev["voice"]["stt"], ev["voice"]["tts"]
@@ -303,8 +354,8 @@ class SettingsDialog(QDialog):
             patch["agent"] = {"language": self.agent_lang.currentText()}
         ui_new: dict[str, Any] = {"language": self.ui_lang.currentText(), "avatar_enabled": self.avatar_on.isChecked(),
                   "avatar_always_on_top": self.on_top.isChecked(), "avatar_wander": self.wander.isChecked(),
-                  "avatar_scale": round(self.scale.value(), 2), "skin": self.skin.currentText()}
-        if ch := {k: v for k, v in ui_new.items() if v != d["ui"][k]}:
+                  "avatar_scale": round(self.scale.value(), 2), "skin": self.skin.currentText(), "highlight": self.highlight}
+        if ch := {k: v for k, v in ui_new.items() if v != {"highlight": DEFAULT_HIGHLIGHT, **d["ui"]}[k]}:
             patch["ui"] = ch
         stt, tts = d["voice"]["stt"], d["voice"]["tts"]
         voice: dict[str, Any] = {}
@@ -338,6 +389,7 @@ class SettingsDialog(QDialog):
             self._send({"type": "set_agent_name", "name": self.name.text().strip()})
         if patch:
             self._send({"type": "settings_set", "patch": patch})
+            self._saved_highlight = self.highlight
             self.status.setText(tr("Saved.", "Đã lưu."))
         self.ui_changed.emit()
 
@@ -349,6 +401,8 @@ class SettingsDialog(QDialog):
     def hideEvent(self, e: object) -> None:
         super().hideEvent(e)  # type: ignore[arg-type]
         self._stats.stop()
+        if self.highlight != self._saved_highlight:  # closed without saving: drop the colour preview
+            self._set_highlight(self._saved_highlight)
 
     def _sync_stats(self) -> None:
         if self.isVisible() and self.tabs.currentIndex() == self.tabs.count() - 1:

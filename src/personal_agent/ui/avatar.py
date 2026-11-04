@@ -55,6 +55,7 @@ class AvatarWindow(QWidget):
     double_clicked = Signal()  # open the chat window
     files_dropped = Signal(list)
     moved = Signal(QPoint)
+    drag_started = Signal()  # the user began dragging the avatar (not just clicking it)
     menu_requested = Signal()  # right click: the app opens the radial menu around the avatar
 
     def __init__(self, skin: Skin, scale: float = 1.0, always_on_top: bool = True) -> None:
@@ -245,6 +246,7 @@ class AvatarWindow(QWidget):
         if not self._dragging and (g - self._press).manhattanLength() >= DRAG_PX:
             self._dragging = True
             self._click_timer.stop()
+            self.drag_started.emit()
         if self._dragging:
             new = g - self._drag_offset
             self._face(new.x() - self.x())

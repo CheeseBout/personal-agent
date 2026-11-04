@@ -26,6 +26,7 @@ from PySide6.QtWidgets import (
 from personal_agent.ui import attach
 from personal_agent.ui.i18n import tr
 from personal_agent.ui.model import Entry, Session
+from personal_agent.ui.nav import NavRail, top_bar
 
 IDLE_CLOSE_MS = 5000  # the quick box closes itself after this long if nothing is typed
 MARK = {"todo": "☐", "done": "✔", "failed": "✖", "blocked": "⏸"}
@@ -139,6 +140,7 @@ class ChatWindow(QMainWindow):
     stop_requested = Signal()
     quit_requested = Signal()
     resume_requested = Signal()
+    navigate = Signal(str)  # a page key from the sidebar (chat, approvals, memory, ..., settings)
 
     def __init__(self, session: Session) -> None:
         super().__init__()
@@ -192,7 +194,20 @@ class ChatWindow(QMainWindow):
         split.addWidget(self.plan)
         split.setStretchFactor(0, 3)
         split.setStretchFactor(1, 1)
-        self.setCentralWidget(split)
+        self.rail = NavRail("chat", session.agent_name)
+        self.rail.navigate.connect(self.navigate)
+        self.page_title = QLabel()
+        shell = QWidget()
+        row_shell = QHBoxLayout(shell)
+        row_shell.setContentsMargins(0, 0, 0, 0)
+        row_shell.setSpacing(0)
+        row_shell.addWidget(self.rail)
+        col = QVBoxLayout()
+        col.setSpacing(0)
+        col.addWidget(top_bar(self, self.page_title))
+        col.addWidget(split, 1)
+        row_shell.addLayout(col, 1)
+        self.setCentralWidget(shell)
         self.setAcceptDrops(True)
         self.resize(980, 640)
         self.retranslate()
@@ -200,6 +215,9 @@ class ChatWindow(QMainWindow):
 
     def retranslate(self) -> None:
         self.setWindowTitle(self.session.agent_name)
+        self.page_title.setText(tr("Chat", "Trò chuyện"))
+        self.rail.set_name(self.session.agent_name)
+        self.rail.retranslate()
         self.attach_btn.setText(tr("Attach", "Đính kèm"))
         self.mic_btn.setText(tr("🎤 Talk", "🎤 Nói"))
         self.stop_btn.setText(tr("Stop all", "Dừng tất cả"))
@@ -355,6 +373,11 @@ class QuickInput(QWidget):
             self._idle.stop()
         else:
             self._idle.start()
+
+    def close_if_empty(self) -> None:
+        """Hide the box unless the user has started something (typed text or attached a file)."""
+        if self.isVisible() and not self.edit.toPlainText().strip() and not self._files:
+            self.hide()
 
     def hideEvent(self, e: Any) -> None:
         self._idle.stop()

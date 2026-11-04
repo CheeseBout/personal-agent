@@ -91,6 +91,24 @@ def test_a_parent_slot_opens_a_sub_ring_with_back_and_escape_goes_back(menu: Rad
     assert ran == ["y"] and not menu.isVisible()
 
 
+def test_arrow_keys_move_the_highlight_and_enter_picks_it(menu: RadialMenu) -> None:
+    ran: list[str] = []
+    items = [RadialItem(n, n, n, lambda n=n: ran.append(n)) for n in "ABC"]
+    menu.open_around(target(), items)
+    QTest.keyClick(menu, Qt.Key.Key_Return)  # nothing highlighted yet: Enter does nothing
+    assert menu.isVisible() and menu._hover is None
+    QTest.keyClick(menu, Qt.Key.Key_Right)
+    QTest.keyClick(menu, Qt.Key.Key_Down)
+    assert menu._hover == 1
+    QTest.keyClick(menu, Qt.Key.Key_Left)
+    QTest.keyClick(menu, Qt.Key.Key_Up)  # wraps from the first slot to the last
+    assert menu._hover == 2
+    menu.grab()  # painting with a highlighted slot must not fail
+    QTest.keyClick(menu, Qt.Key.Key_Space)
+    pump(50)
+    assert ran == ["C"] and not menu.isVisible()
+
+
 def test_a_dangerous_slot_needs_a_second_click(menu: RadialMenu) -> None:
     ran: list[int] = []
     menu.open_around(target(), [RadialItem("Safe", "An toàn", "s", lambda: ran.append(0)), RadialItem("Stop", "Dừng", "!", lambda: ran.append(1), danger=True)])
