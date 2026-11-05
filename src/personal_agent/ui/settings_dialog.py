@@ -15,8 +15,6 @@ from PySide6.QtWidgets import (
     QCheckBox,
     QColorDialog,
     QComboBox,
-    QDialog,
-    QDialogButtonBox,
     QDoubleSpinBox,
     QFileDialog,
     QFormLayout,
@@ -47,23 +45,26 @@ KEY_HELP = {"ANTHROPIC_API_KEY": "Anthropic (Claude)", "GOOGLE_API_KEY": "Google
             "LANGFUSE_SECRET_KEY": "Langfuse secret key", "LANGFUSE_BASE_URL": "Langfuse URL"}
 
 
-class SettingsDialog(QDialog):
+class SettingsDialog(QWidget):
+    """The settings page inside the main window: tabs plus one Save button."""
+
     ui_changed = Signal()  # UI-side preference changed (language, avatar, skin...): the app re-applies it
 
     def __init__(self, send: Send, daemon_pid: Callable[[], int | None]) -> None:
         super().__init__()
         self._send, self._pid = send, daemon_pid
         self.data: dict[str, Any] = {}
-        self.resize(640, 520)
         self.tabs = QTabWidget()
         lay = QVBoxLayout(self)
         lay.addWidget(self.tabs)
         self.status = QLabel()
-        lay.addWidget(self.status)
-        box = QDialogButtonBox(QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Close)
-        box.accepted.connect(self.save)
-        box.rejected.connect(self.hide)
-        lay.addWidget(box)
+        self.save_btn = QPushButton()
+        self.save_btn.setProperty("role", "primary")
+        self.save_btn.clicked.connect(self.save)
+        row = QHBoxLayout()
+        row.addWidget(self.status, 1)
+        row.addWidget(self.save_btn)
+        lay.addLayout(row)
         self._stats = QTimer(self)
         self._stats.timeout.connect(self._refresh_stats)
         self.tabs.currentChanged.connect(lambda _i: self._sync_stats())
@@ -203,7 +204,7 @@ class SettingsDialog(QDialog):
         self.retranslate()
 
     def retranslate(self) -> None:
-        self.setWindowTitle(tr("Settings", "Cài đặt"))
+        self.save_btn.setText(tr("Save changes", "Lưu thay đổi"))
         for i, (en, vi) in enumerate((("General", "Chung"), ("Models", "Mô hình"), ("API keys", "Khóa API"), ("Voice", "Giọng nói"),
                                       ("Budgets", "Ngân sách"), ("Screen", "Màn hình"), ("About", "Giới thiệu"))):
             self.tabs.setTabText(i, tr(en, vi))

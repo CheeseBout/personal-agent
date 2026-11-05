@@ -13,7 +13,6 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QListWidget,
-    QMainWindow,
     QPlainTextEdit,
     QProgressBar,
     QPushButton,
@@ -26,10 +25,9 @@ from PySide6.QtWidgets import (
 from personal_agent.ui import attach
 from personal_agent.ui.i18n import tr
 from personal_agent.ui.model import Entry, Session
-from personal_agent.ui.nav import NavRail, top_bar
 
 IDLE_CLOSE_MS = 5000  # the quick box closes itself after this long if nothing is typed
-MARK = {"todo": "☐", "done": "✔", "failed": "✖", "blocked": "⏸"}
+MARK = {"todo": "☐", "done": "✔", "failed": "✖", "blocked": "–"}
 
 
 class Composer(QPlainTextEdit):
@@ -58,14 +56,14 @@ def render_markdown(session: Session) -> str:
     parts: list[str] = []
     for e in session.transcript:
         if e.kind == "user":
-            files = "".join(f"\n\n📎 {n}" for n in e.meta.get("attachments", []))
+            files = "".join(f"\n\n[{n}]" for n in e.meta.get("attachments", []))
             parts.append(f"**{tr('You', 'Bạn')}**\n\n{e.text}{files}")
         elif e.kind == "agent":
             u = e.meta.get("used") or {}
             foot = f"\n\n<sub>{u.get('steps')} steps · {u.get('tokens')} tokens · ${float(u.get('cost') or 0):.4f}</sub>" if u else ""
             parts.append(f"**{session.agent_name}**\n\n{e.text}{foot}")
         elif e.kind == "error":
-            parts.append(f"**⚠ {e.text}**")
+            parts.append(f"**{e.text}**")
         else:
             parts.append(f"> _{e.text.replace(chr(10), ' ')}_")
     return "\n\n".join(parts)
@@ -134,13 +132,14 @@ class PlanPanel(QWidget):
         bar.setFormat(f"${used:,.4f} / ${cap:,.2f}" if unit == "$" else f"{used:,.0f} / {cap:,.0f} {unit}")
 
 
-class ChatWindow(QMainWindow):
+class ChatWindow(QWidget):
+    """The chat page: transcript, composer and the plan panel. It lives inside the main window, which owns the sidebar."""
+
     submitted = Signal(str, list)  # text, attachments
     record_toggled = Signal(bool)
     stop_requested = Signal()
     quit_requested = Signal()
     resume_requested = Signal()
-    navigate = Signal(str)  # a page key from the sidebar (chat, approvals, memory, ..., settings)
 
     def __init__(self, session: Session) -> None:
         super().__init__()
@@ -194,32 +193,16 @@ class ChatWindow(QMainWindow):
         split.addWidget(self.plan)
         split.setStretchFactor(0, 3)
         split.setStretchFactor(1, 1)
-        self.rail = NavRail("chat", session.agent_name)
-        self.rail.navigate.connect(self.navigate)
-        self.page_title = QLabel()
-        shell = QWidget()
-        row_shell = QHBoxLayout(shell)
-        row_shell.setContentsMargins(0, 0, 0, 0)
-        row_shell.setSpacing(0)
-        row_shell.addWidget(self.rail)
-        col = QVBoxLayout()
-        col.setSpacing(0)
-        col.addWidget(top_bar(self, self.page_title))
-        col.addWidget(split, 1)
-        row_shell.addLayout(col, 1)
-        self.setCentralWidget(shell)
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.addWidget(split)
         self.setAcceptDrops(True)
-        self.resize(980, 640)
         self.retranslate()
         self.refresh()
 
     def retranslate(self) -> None:
-        self.setWindowTitle(self.session.agent_name)
-        self.page_title.setText(tr("Chat", "Trò chuyện"))
-        self.rail.set_name(self.session.agent_name)
-        self.rail.retranslate()
         self.attach_btn.setText(tr("Attach", "Đính kèm"))
-        self.mic_btn.setText(tr("🎤 Talk", "🎤 Nói"))
+        self.mic_btn.setText(tr("Talk", "Nói"))
         self.stop_btn.setText(tr("Stop all", "Dừng tất cả"))
         self.send_btn.setText(tr("Send", "Gửi"))
         self.quit_btn.setText(tr("Quit", "Thoát"))
@@ -249,7 +232,7 @@ class ChatWindow(QMainWindow):
             self.status.setText(self._note or (tr("Waiting for your approval ({n})", "Đang chờ bạn duyệt ({n})", n=n) if n
                                                else tr("Working…", "Đang xử lý…") if self.session.busy else ""))
             self.send_btn.setEnabled(not n)
-        self.chips.setText("  ".join(f"📎 {html.escape(f['name'])} <a href=\"rm:{i}\" style=\"text-decoration:none\">✕</a>"
+        self.chips.setText("  ".join(f"{html.escape(f['name'])} <a href=\"rm:{i}\" style=\"text-decoration:none\">✕</a>"
                                      for i, f in enumerate(self._files)))
 
     # ---- user input -------------------------------------------------------------------------------------------------
@@ -294,7 +277,7 @@ class ChatWindow(QMainWindow):
 
     def _mic(self, on: bool) -> None:
         self._recording = on
-        self.mic_btn.setText(tr("⏹ Stop", "⏹ Dừng") if on else tr("🎤 Talk", "🎤 Nói"))
+        self.mic_btn.setText(tr("Stop", "Dừng") if on else tr("Talk", "Nói"))
         self.record_toggled.emit(on)
 
     def add_attachment(self, a: dict[str, Any]) -> None:
@@ -317,10 +300,6 @@ class ChatWindow(QMainWindow):
 
     def dropEvent(self, e: Any) -> None:
         self.add_files([u.toLocalFile() for u in e.mimeData().urls() if u.isLocalFile()])
-
-    def closeEvent(self, e: Any) -> None:  # closing the window only hides it: the app lives in the tray
-        e.ignore()
-        self.hide()
 
 
 class QuickInput(QWidget):
@@ -361,7 +340,7 @@ class QuickInput(QWidget):
             except (ValueError, OSError) as e:
                 self.hint.setText(str(e))
         if self._files:
-            self.hint.setText("  ".join(f"📎 {f['name']}" for f in self._files))
+            self.hint.setText("  ".join(f"{f['name']}" for f in self._files))
         self.hint.setVisible(bool(self._files) or bool(self.hint.text()))
         self.adjustSize()
         self.move(near.x() - self.width() + near.width(), near.y() - self.height() - 6 if near.y() > self.height() + 10 else near.y() + near.height() + 6)

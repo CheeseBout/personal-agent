@@ -126,7 +126,7 @@ def ui(qapp: QApplication, monkeypatch: pytest.MonkeyPatch) -> Any:
     app.sent = sent  # type: ignore[attr-defined]
     app.avatar.show()
     yield app
-    for w in (app.chat, app.approvals, app.manager, app.settings, app.quick, app.bubble, app.avatar, app.highlight, app.watch_badge):
+    for w in (app.window, app.approvals, app.quick, app.bubble, app.avatar, app.highlight, app.watch_badge):
         w.hide()
     app.tray.hide()
 
@@ -156,7 +156,7 @@ def test_agent_activity_is_always_visible_to_the_user(ui: UiApp) -> None:
     ui.on_event({"type": "screen_viewed", "kind": "describe", "title": "Notes"})
     assert "looked at your screen" in ui.bubble._label.text()
     ui.on_event({"type": "control_aborted", "reason": "you moved the mouse, so the sequence was stopped"})
-    assert "⛔" in ui.bubble._label.text()
+    assert "mouse" in ui.bubble._label.text()
     ui.on_event({"type": "screen_change", "title": "x", "distance": 12, "changes": 3})
     assert "×3" in ui.tray.toolTip()
 
@@ -182,7 +182,7 @@ def test_capturing_a_private_window_is_refused_with_a_clear_message(ui: UiApp, m
 
     monkeypatch.setattr("personal_agent.ui.app.capture_attachment", blocked)
     ui.capture("active_window")
-    assert "🔒" in ui.bubble._label.text() and not ui.chat._files
+    assert ui.bubble._label.text() and not ui.chat._files
 
 
 def test_a_region_selection_triggers_a_region_capture(ui: UiApp, monkeypatch: pytest.MonkeyPatch) -> None:

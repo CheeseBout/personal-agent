@@ -160,7 +160,7 @@ def ui(qapp: QApplication, monkeypatch: pytest.MonkeyPatch) -> Any:
     app.avatar.show()
     yield app
     app.radial.close()
-    for w in (app.chat, app.approvals, app.manager, app.settings, app.quick, app.bubble, app.avatar, app.highlight, app.watch_badge):
+    for w in (app.window, app.approvals, app.quick, app.bubble, app.avatar, app.highlight, app.watch_badge):
         w.hide()
     app.tray.hide()
 

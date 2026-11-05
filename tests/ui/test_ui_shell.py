@@ -8,13 +8,14 @@ from typing import Any
 import pytest
 from pydantic import ValidationError
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QApplication, QDialogButtonBox
+from PySide6.QtWidgets import QApplication
 from test_ui_windows import settings_event
 
 from personal_agent.settings.settings import UiCfg
 from personal_agent.ui import nav, theme
 from personal_agent.ui.chat import ChatWindow
 from personal_agent.ui.i18n import set_language
+from personal_agent.ui.main_window import MainWindow
 from personal_agent.ui.model import Session
 from personal_agent.ui.pages import ManagerWindow
 from personal_agent.ui.settings_dialog import SettingsDialog
@@ -82,27 +83,34 @@ def test_highlight_setting_only_accepts_a_hex_colour() -> None:
             UiCfg(highlight=bad)
 
 
-def test_hamburger_collapses_and_restores_the_sidebar_in_every_window(qapp: QApplication) -> None:
-    chat, mgr = ChatWindow(Session()), ManagerWindow(lambda _m: None)
-    assert not chat.rail.isHidden() and not mgr.rail.isHidden()
-    chat.findChild(nav.QToolButton, "Burger").click()
-    assert chat.rail.isHidden() and mgr.rail.isHidden()  # one app-wide state
+def _main() -> MainWindow:
+    return MainWindow(ChatWindow(Session()), ManagerWindow(lambda _m: None), SettingsDialog(lambda _m: None, lambda: None), "Mimi")
+
+
+def test_hamburger_collapses_and_restores_the_one_sidebar(qapp: QApplication) -> None:
+    w = _main()
+    assert not w.rail.isHidden()
+    w.findChild(nav.QToolButton, "Burger").click()
+    assert w.rail.isHidden()
     assert (Path(nav.data_dir()) / "ui_state.json").read_text(encoding="utf-8") == '{"rail_collapsed": true}'
-    mgr.findChild(nav.QToolButton, "Burger").click()
-    assert not chat.rail.isHidden() and not mgr.rail.isHidden()
+    w.findChild(nav.QToolButton, "Burger").click()
+    assert not w.rail.isHidden()
 
 
-def test_sidebar_navigates_between_pages_and_windows(qapp: QApplication) -> None:
-    mgr, chat = ManagerWindow(lambda _m: None), ChatWindow(Session())
+def test_sidebar_switches_chat_manager_and_settings_inside_one_window(qapp: QApplication) -> None:
+    w = _main()
     asked: list[str] = []
-    mgr.navigate_out.connect(asked.append)
-    chat.navigate.connect(asked.append)
-    mgr.rail.buttons["rag"].click()
-    assert mgr.stack.currentWidget() is mgr.pages["rag"][0] and mgr.page_title.text() == "Documents" and mgr.rail.current == "rag"
-    mgr.rail.buttons["chat"].click()
-    mgr.rail.buttons["settings"].click()
-    chat.rail.buttons["memory"].click()
-    assert asked == ["chat", "settings", "memory"]
+    w.approvals_requested.connect(lambda: asked.append("approvals"))
+    w.settings_opened.connect(lambda: asked.append("settings"))
+    w.rail.buttons["rag"].click()
+    assert w.stack.currentWidget() is w.manager and w.manager.stack.currentWidget() is w.manager.pages["rag"][0]
+    assert w.page_title.text() == "Documents" and w.rail.current == "rag"
+    w.rail.buttons["settings"].click()
+    assert w.stack.currentWidget() is w.settings and w.page_title.text() == "Settings"
+    w.rail.buttons["chat"].click()
+    assert w.stack.currentWidget() is w.chat and w.page_title.text() == "Chat" and w.rail.current == "chat"
+    w.rail.buttons["approvals"].click()  # not a page: the card raises
+    assert asked == ["settings", "approvals"] and w.rail.current == "chat"
 
 
 def test_approval_count_shows_as_a_badge() -> None:
@@ -140,7 +148,7 @@ def test_save_button_saves_once_closing_drops_the_unsaved_preview_and_swatches_h
     d = SettingsDialog(sent.append, lambda: None)
     d.load(settings_event())
     d.name.setText("Bé Na")
-    d.findChild(QDialogButtonBox).button(QDialogButtonBox.StandardButton.Save).click()  # the real button, not d.save()
+    d.save_btn.click()  # the real button, not d.save()
     assert [m["type"] for m in sent] == ["set_agent_name"]  # once, not twice
     assert d.hl_swatches["#3340D9"].accessibleName() == "Ultramarine" and "#3340D9" in d.hl_swatches["#3340D9"].toolTip()
     set_language("vi")

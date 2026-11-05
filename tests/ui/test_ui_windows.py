@@ -18,6 +18,7 @@ from personal_agent.ui.avatar import AvatarWindow, SpeechBubble, snap_to_edges
 from personal_agent.ui.avatar_state import STATES
 from personal_agent.ui.chat import ChatWindow, QuickInput, render_markdown
 from personal_agent.ui.i18n import set_language
+from personal_agent.ui.main_window import MainWindow
 from personal_agent.ui.model import Session
 from personal_agent.ui.pages import ManagerWindow
 from personal_agent.ui.settings_dialog import FirstRunWizard, SettingsDialog
@@ -225,7 +226,7 @@ def test_chat_attachments_from_files_and_pasted_images(qapp: QApplication, tmp_p
     img = QImage(8, 8, QImage.Format.Format_RGB32)
     img.fill(QColor("#00ff00"))
     w.composer.image_pasted.emit(img)
-    assert [a["name"] for a in w._files] == ["notes.txt", "pasted-2.png"] and "📎 notes.txt" in w.chips.text()
+    assert [a["name"] for a in w._files] == ["notes.txt", "pasted-2.png"] and "notes.txt" in w.chips.text()
     QTest.mouseClick(w.send_btn, Qt.MouseButton.LeftButton)
     text, files = sent[0]
     assert text == "" and files[1]["mime"] == "image/png" and files[0]["mime"] == "text/plain"
@@ -360,7 +361,7 @@ def test_manager_pages_fill_from_events_and_send_row_actions(qapp: QApplication,
     sent: list[dict[str, Any]] = []
     m = ManagerWindow(sent.append)
     page = mem_page(m, [{"id": 4, "kind": "fact", "status": "proposed", "text": "likes tea", "sensitive": True}])
-    assert page.table.rowCount() == 1 and page.table.item(0, 2).text().endswith("⚠")
+    assert page.table.rowCount() == 1 and page.table.item(0, 2).text().endswith("!")
     row_btns(page, 0)[1].click()
     assert len(asked) == 1 and "sensitive" in asked[0]  # approving a sensitive memory asks first
     mem_page(m, page.rows)  # a finished action rebuilds the row
@@ -448,10 +449,10 @@ def test_results_are_reported_after_the_list_reloads(qapp: QApplication) -> None
         m.on_event({"type": "memory", "items": ITEMS, "rid": sent[-1]["rid"]})
         return m.status.text()
     assert settle({"type": "memory_deleted", "ok": True}) == "Deleted."
-    assert settle({"type": "memory_deleted", "ok": False}).startswith("⚠")
+    assert settle({"type": "memory_deleted", "ok": False}).startswith("!")
     assert settle({"type": "memory_updated", "ok": True, "status": "active"}) == "Saved."
     assert "approval" in settle({"type": "memory_updated", "ok": True, "status": "proposed"})
-    assert settle({"type": "memory_updated", "ok": False}).startswith("⚠")
+    assert settle({"type": "memory_updated", "ok": False}).startswith("!")
     assert page.table.rowCount() == 3
 
 
@@ -492,10 +493,12 @@ def test_memory_edit_sends_the_new_text_and_ignores_cancel_or_no_change(qapp: QA
 
 
 def test_language_switch_retranslates_the_manager(qapp: QApplication) -> None:
-    m = ManagerWindow(lambda _p: None)
+    w = MainWindow(ChatWindow(Session()), ManagerWindow(lambda _p: None), SettingsDialog(lambda _m: None, lambda: None), "Mimi")
+    w.open("memory")
     set_language("vi")
-    m.retranslate()
-    assert m.rail.buttons["memory"].text() == "Bộ nhớ" and m.page_title.text() == "Bộ nhớ" and m.windowTitle() == "Quản lý"
+    w.retranslate()
+    w.manager.retranslate()
+    assert w.rail.buttons["memory"].text() == "Bộ nhớ" and w.page_title.text() == "Bộ nhớ" and w.windowTitle() == "Mimi"
 
 
 # ---- settings dialog / wizard ---------------------------------------------------------------------------------------------------------------
@@ -616,9 +619,9 @@ def test_documents_page_state_jobs_and_reports(qapp: QApplication, monkeypatch: 
     assert asked and sent[-1]["type"] == "rag_sync" and not page.add_file.isEnabled()  # confirmed, and locked while indexing
     rid = sent[-1]["rid"]
     m.on_event({"type": "rag_synced", "rid": rid, "folders": 1, "report": ["ingested: a.md (3 chunks)", "failed: b.pdf: boom"]})
-    assert page.add_file.isEnabled() and "b.pdf" in page.output.toPlainText() and "⚠" in m._note
+    assert page.add_file.isEnabled() and "b.pdf" in page.output.toPlainText() and "!" in m._note
     m.on_event({"type": "rag_synced", "rid": 0, "folders": 0, "report": []})
-    assert "⚠" in m._note
+    assert "!" in m._note
     row_btns_rag = page.table.cellWidget(0, 4).findChildren(QPushButton)
     row_btns_rag[0].click()
     assert "not deleted" in asked[-1] or "không bị xóa" in asked[-1]
@@ -658,4 +661,4 @@ def test_mcp_page_shows_reload_state_confirms_and_locks_while_reloading(qapp: QA
     assert "npx -y thing" in asked[-1] and sent[-1]["type"] == "mcp_reload" and not page.reload_btn.isEnabled()  # locked, with a busy label
     m.on_event({"type": "mcp", "rid": sent[-1]["rid"], "reloaded": True, "reload_needed": False,
                 "servers": {"fs": {**srv, "status": "error: boom"}, "old": off}})
-    assert page.reload_btn.isEnabled() and "boom" in page.output.toPlainText() and "⚠" in m.status.text()
+    assert page.reload_btn.isEnabled() and "boom" in page.output.toPlainText() and "!" in m.status.text()

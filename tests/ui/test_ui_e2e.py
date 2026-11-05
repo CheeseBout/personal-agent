@@ -56,7 +56,7 @@ def ui(qapp: QApplication, daemon: int) -> Iterator[UiApp]:
     client.stop()
     pump(300)  # let the socket close cleanly before the server is told to exit
     app.tray.hide()
-    for w in (app.chat, app.approvals, app.manager, app.settings, app.quick, app.bubble):
+    for w in (app.window, app.approvals, app.quick, app.bubble):
         w.close()
     if hasattr(app, "wizard"):
         app.wizard.close()
@@ -82,7 +82,7 @@ def test_renaming_from_settings_updates_titles_everywhere(ui: UiApp) -> None:
     assert wait_for(lambda: ui.client.is_connected and bool(ui._last_settings))
     ui.client.send({"type": "set_agent_name", "name": "Mimi"})
     assert wait_for(lambda: ui.session.agent_name == "Mimi")
-    assert ui.chat.windowTitle() == "Mimi" and ui.tray.toolTip() == "Mimi" and ui.avatar.windowTitle() == "Mimi"
+    assert ui.window.windowTitle() == "Mimi" and ui.tray.toolTip() == "Mimi" and ui.avatar.windowTitle() == "Mimi"
 
 
 def test_attachments_and_settings_roundtrip_through_the_real_daemon(ui: UiApp, tmp_path: Path) -> None:

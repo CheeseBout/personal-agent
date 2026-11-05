@@ -73,7 +73,7 @@ class ApprovalCard(QGroupBox):
         why.setWordWrap(True)
         lay.addWidget(why)
         if a.get("tainted"):
-            warn = QLabel("⚠ " + tr("This action follows untrusted content (web page, file or tool output). Check it carefully.",
+            warn = QLabel(tr("This action follows untrusted content (web page, file or tool output). Check it carefully.",
                                     "Hành động này đến sau nội dung không đáng tin (web, tệp, kết quả công cụ). Hãy kiểm tra kỹ."))
             warn.setWordWrap(True)
             warn.setProperty("role", "warn")

@@ -26,6 +26,7 @@ from personal_agent.ui.avatar_state import AvatarState
 from personal_agent.ui.chat import ChatWindow, QuickInput
 from personal_agent.ui.client import DaemonClient
 from personal_agent.ui.i18n import set_language, tr
+from personal_agent.ui.main_window import MainWindow
 from personal_agent.ui.model import Session
 from personal_agent.ui.pages import ManagerWindow
 from personal_agent.ui.radial import RadialItem, RadialMenu
@@ -60,6 +61,7 @@ class UiApp:
         self.approvals = ApprovalCenter(self.session)
         self.manager = ManagerWindow(client.send)
         self.settings = SettingsDialog(client.send, lambda: self.daemon_pid)
+        self.window = MainWindow(self.chat, self.manager, self.settings, settings.agent.name)
         self.quick = QuickInput()
         self.bubble = SpeechBubble()
         self.recorder = Recorder(settings.voice.stt.max_seconds)
@@ -98,8 +100,8 @@ class UiApp:
         c.connected.connect(self.on_connected)
         c.disconnected.connect(self.on_disconnected)
         self.chat.submitted.connect(self.send_user)
-        self.chat.navigate.connect(self.navigate)
-        self.manager.navigate_out.connect(self.navigate)
+        self.window.approvals_requested.connect(self.show_approvals)
+        self.window.settings_opened.connect(lambda: c.send({"type": "settings_get"}))
         self.chat.stop_requested.connect(self.kill)
         self.chat.resume_requested.connect(lambda: self.client.send({"type": "release_kill"}))
         self.chat.quit_requested.connect(self.quit)
@@ -137,7 +139,7 @@ class UiApp:
             for key, en, vi in (("memory", "Memory", "Bộ nhớ"), ("rag", "Documents", "Tài liệu"), ("mcp", "Tools / MCP", "Công cụ / MCP"),
                                 ("schedules", "Schedules", "Lịch chạy"), ("rules", "Remembered approvals", "Quy tắc đã nhớ"),
                                 ("audit", "Audit log", "Nhật ký"), ("usage", "Usage", "Mức dùng"), ("policy", "Policy", "Chính sách")):
-                self._action(sub, en, vi, lambda k=key: self.manager.open_page(k))
+                self._action(sub, en, vi, lambda k=key: self.window.show_page(k))
             self._action(m, "Settings", "Cài đặt", self.show_settings)
             m.addSeparator()
             cap = m.addMenu(tr("Capture", "Chụp màn hình"))
@@ -166,27 +168,27 @@ class UiApp:
         def resume() -> None:
             self.client.send({"type": "release_kill"})
 
-        pages = (("memory", "Memory", "Bộ nhớ", "🧠"), ("rag", "Documents", "Tài liệu", "📄"), ("mcp", "Tools / MCP", "Công cụ", "🧩"),
-                 ("schedules", "Schedules", "Lịch chạy", "⏰"), ("rules", "Remembered", "Đã nhớ", "📌"), ("audit", "Audit log", "Nhật ký", "📜"),
-                 ("usage", "Usage", "Mức dùng", "📊"), ("policy", "Policy", "Chính sách", "🛡"))
+        pages = (("memory", "Memory", "Bộ nhớ", "M"), ("rag", "Documents", "Tài liệu", "D"), ("mcp", "Tools / MCP", "Công cụ", "T"),
+                 ("schedules", "Schedules", "Lịch chạy", "S"), ("rules", "Remembered", "Đã nhớ", "R"), ("audit", "Audit log", "Nhật ký", "A"),
+                 ("usage", "Usage", "Mức dùng", "U"), ("policy", "Policy", "Chính sách", "P"))
         return [
-            R("Chat", "Chat", "💬", self.show_chat),
-            R("Talk", "Nói", "🎤", self.toggle_talk, active=lambda: self.recorder.active),
-            R("Capture", "Chụp", "📸", children=[
-                R("Whole screen", "Toàn màn hình", "🖥", lambda: self.capture("screen")),
-                R("Window (2 s)", "Cửa sổ (2 giây)", "🪟", self.capture_window_soon),
-                R("Select area", "Chọn vùng", "✂", self.capture_region)]),
-            R("Watch", "Theo dõi", "👁", self.toggle_watch, active=watching,
+            R("Chat", "Chat", "C", self.show_chat),
+            R("Talk", "Nói", "T", self.toggle_talk, active=lambda: self.recorder.active),
+            R("Capture", "Chụp", "C", children=[
+                R("Whole screen", "Toàn màn hình", "S", lambda: self.capture("screen")),
+                R("Window (2 s)", "Cửa sổ (2 giây)", "W", self.capture_window_soon),
+                R("Select area", "Chọn vùng", "A", self.capture_region)]),
+            R("Watch", "Theo dõi", "W", self.toggle_watch, active=watching,
               label=lambda: tr("Stop watching", "Dừng theo dõi") if watching() else tr("Watch screen", "Theo dõi màn hình")),
-            R("Approvals", "Phê duyệt", "✅", self.show_approvals, badge=lambda: len(self.session.approvals)),
-            R("Manage", "Quản lý", "🗂", children=[R(en, vi, g, partial(self.manager.open_page, k)) for k, en, vi, g in pages]),
+            R("Approvals", "Phê duyệt", "A", self.show_approvals, badge=lambda: len(self.session.approvals)),
+            R("Manage", "Quản lý", "M", children=[R(en, vi, g, partial(self.window.show_page, k)) for k, en, vi, g in pages]),
             R("More", "Thêm", "⋯", children=[
-                R("Settings", "Cài đặt", "⚙", self.show_settings),
-                R("Stop speaking", "Ngừng đọc", "🔇", self.speaker.stop),
-                R("Resume agent", "Cho chạy lại", "▶", resume),
-                R("Hide avatar", "Ẩn avatar", "🙈", self.toggle_avatar),
-                R("Quit the UI", "Thoát giao diện", "⏻", self.quit)]),
-            R("Pause agent", "Dừng agent", "⛔", self.kill, danger=True),  # the kill switch: needs a second click
+                R("Settings", "Cài đặt", "S", self.show_settings),
+                R("Stop speaking", "Ngừng đọc", "S", self.speaker.stop),
+                R("Resume agent", "Cho chạy lại", "R", resume),
+                R("Hide avatar", "Ẩn avatar", "H", self.toggle_avatar),
+                R("Quit the UI", "Thoát giao diện", "Q", self.quit)]),
+            R("Pause agent", "Dừng agent", "!", self.kill, danger=True),  # the kill switch: needs a second click
         ]
 
     def open_radial(self) -> None:
@@ -229,8 +231,7 @@ class UiApp:
             self.approvals.refresh()
             new = set(self.session.approvals) - before
             self.approval_action.setText(tr("Approvals ({n})", "Phê duyệt ({n})", n=len(self.session.approvals)))
-            for rail in (self.chat.rail, self.manager.rail):
-                rail.set_badge(len(self.session.approvals))
+            self.window.rail.set_badge(len(self.session.approvals))
             if new:
                 tool = self.session.approvals[min(new)]["tool"]
                 self.say(tr("Needs your approval: {t}", "Cần bạn duyệt: {t}", t=tool), sticky=True)
@@ -260,7 +261,7 @@ class UiApp:
             if self.cfg.voice.tts.enabled and ev.get("text"):
                 self.speaker.speak(str(ev["text"]), self.cfg.voice.tts)
         elif t == "error" and ev.get("code") not in ("approval_pending",):
-            self.say(f"⚠ {ev.get('message', '')}", ms=5000)
+            self.say(f"! {ev.get('message', '')}", ms=5000)
         elif t == "killed":
             self.speaker.stop()
         elif t == "schedule_run":
@@ -270,12 +271,12 @@ class UiApp:
         elif t == "screen_change":
             self.tray.setToolTip(f"{self.session.agent_name} — " + tr("screen changed ×{n}", "màn hình đổi ×{n}", n=ev.get("changes", 0)))
         elif t == "screen_viewed":
-            self.say("👁 " + tr("{n} looked at your screen ({k})", "{n} đã xem màn hình ({k})", n=self.session.agent_name, k=ev.get("kind", "")), ms=3500)
+            self.say(tr("{n} looked at your screen ({k})", "{n} đã xem màn hình ({k})", n=self.session.agent_name, k=ev.get("kind", "")), ms=3500)
         elif t == "highlight":
             self.highlight.show_rect(tuple(ev["rect"]), str(ev.get("label", "")), int(ev.get("ms", 700)))
         elif t == "control_aborted":
-            self.say("⛔ " + str(ev.get("reason", "")), ms=6000)
-            self.tray.showMessage(self.session.agent_name, "⛔ " + str(ev.get("reason", "")))
+            self.say(str(ev.get("reason", "")), ms=6000)
+            self.tray.showMessage(self.session.agent_name, str(ev.get("reason", "")))
         self._refresh_state()
 
     def on_settings(self, ev: dict[str, Any]) -> None:
@@ -306,16 +307,16 @@ class UiApp:
     def apply_name(self) -> None:
         n = self.session.agent_name
         self.chat.retranslate()
+        self.window.set_name(n)
         self.tray.setToolTip(n)
         self.avatar.set_label(n)
-        self.manager.rail.set_name(n)
         self.approvals.setWindowTitle(f"{n} — {tr('Approvals', 'Phê duyệt')}")
 
     def apply_ui(self) -> None:
         u = self.cfg.ui
         set_language(u.language)
         set_highlight(self.qapp, u.highlight)
-        for w in (self.chat, self.manager, self.settings, self.quick):
+        for w in (self.chat, self.manager, self.settings, self.quick, self.window):
             w.retranslate()
         self.avatar.set_scale(u.avatar_scale)
         if self.avatar._skin.name != u.skin:
@@ -380,7 +381,7 @@ class UiApp:
     def send_user(self, text: str, files: list[dict[str, Any]]) -> None:
         self.speaker.stop()
         names = [f["name"] for f in files]
-        self.session.user_says(text or "🎤", names)
+        self.session.user_says(text or tr("(voice message)", "(tin nhắn thoại)"), names)
         self.state.user_sent()
         payload = {"type": "user", "thread_id": self.thread, "text": text, "attachments": files}
         if not self.client.send(payload):
@@ -404,14 +405,11 @@ class UiApp:
         self.client.send({"type": "kill"})
 
     def show_chat(self) -> None:
-        self.chat.show()
-        self.chat.raise_()
-        self.chat.activateWindow()
-        self.chat.composer.setFocus()
+        self.window.show_page("chat")
 
     def navigate(self, key: str) -> None:
-        """A sidebar item was clicked in the chat or manager window."""
-        {"chat": self.show_chat, "approvals": self.show_approvals, "settings": self.show_settings}.get(key, lambda: self.manager.open_page(key))()
+        """Show a page of the main window (chat, a manager page or settings) or the approvals card."""
+        self.show_approvals() if key == "approvals" else self.window.show_page(key)
 
     def show_approvals(self) -> None:
         self.approvals.refresh()
@@ -419,9 +417,7 @@ class UiApp:
         self.approvals.raise_()
 
     def show_settings(self) -> None:
-        self.client.send({"type": "settings_get"})
-        self.settings.show()
-        self.settings.raise_()
+        self.window.show_page("settings")
 
     def toggle_avatar(self) -> None:
         self.avatar.setVisible(not self.avatar.isVisible())
@@ -435,13 +431,13 @@ class UiApp:
         try:
             att, masked, title = capture_attachment(kind, self.cfg.screen, rect)
         except cap.Blocked as e:
-            return self.say("🔒 " + str(e), ms=5000)
+            return self.say(str(e), ms=5000)
         except (cap.CaptureError, OSError, ValueError) as e:
-            return self.say(f"⚠ {e}", ms=5000)
+            return self.say(f"! {e}", ms=5000)
         self.show_chat()
         self.chat.add_attachment(att)
         note = tr(" ({n} private window hidden)", " (đã ẩn {n} cửa sổ riêng tư)", n=masked) if masked else ""
-        self.say("📎 " + tr("Captured: {t}", "Đã chụp: {t}", t=(title or tr("screen", "màn hình"))[:40]) + note, ms=3500)
+        self.say(tr("Captured: {t}", "Đã chụp: {t}", t=(title or tr("screen", "màn hình"))[:40]) + note, ms=3500)
 
     def capture_window_soon(self) -> None:
         self.say(tr("Click the window you want in 2 s…", "Bấm vào cửa sổ cần chụp trong 2 giây…"), ms=2000)

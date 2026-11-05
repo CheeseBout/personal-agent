@@ -32,7 +32,6 @@ from PySide6.QtWidgets import (
 
 from personal_agent.rag.loaders import SUPPORTED
 from personal_agent.ui.i18n import tr
-from personal_agent.ui.nav import NavRail, top_bar
 
 Send = Callable[[dict[str, Any]], Any]
 Row = dict[str, Any]
@@ -94,7 +93,7 @@ def rag_summary(report: list[str]) -> str:
                      tr(f"{n['removed']} removed", f"{n['removed']} đã gỡ")])
     if n["failed"]:
         first = next(ln for ln in report if ln.startswith("failed"))
-        out = f"⚠ {tr(str(n['failed']) + ' failed', str(n['failed']) + ' lỗi')} ({first[:80]}); {out}"
+        out = f"! {tr(str(n['failed']) + ' failed', str(n['failed']) + ' lỗi')} ({first[:80]}); {out}"
     return out
 
 
@@ -192,7 +191,7 @@ class TablePage(QWidget):
     def _timeout(self, rid: int) -> None:
         # No answer: the outcome is unknown, so keep the row locked and ask the daemon for the truth instead of letting a second click repeat it.
         if rid in self._pending:
-            self.note("⚠ " + tr("No answer from the agent yet; refreshing the list.", "Agent chưa trả lời; đang làm mới danh sách."))
+            self.note("! " + tr("No answer from the agent yet; refreshing the list.", "Agent chưa trả lời; đang làm mới danh sách."))
             self.refresh()
 
     def _act(self, row: Row, idx: int) -> None:
@@ -558,7 +557,7 @@ class McpPage(TablePage):
         self.reload_btn.setEnabled(not busy)
         self.reload_btn.setText(tr("Reloading…", "Đang tải lại…") if busy else tr("Reload MCP", "Tải lại MCP"))
         self.state.setText(tr("Reconnecting to the servers… this can take a while.", "Đang kết nối lại các máy chủ… có thể mất một lúc.") if busy else
-                           tr("⚠ Changes are not applied yet: reload MCP.", "⚠ Thay đổi chưa được áp dụng: hãy tải lại MCP.") if self._reload_needed else
+                           tr("Changes are not applied yet: reload MCP.", "Thay đổi chưa được áp dụng: hãy tải lại MCP.") if self._reload_needed else
                            tr("Up to date.", "Đã cập nhật."))
 
     def load(self, ev: Row) -> bool:
@@ -584,7 +583,7 @@ class McpPage(TablePage):
     def _show_tools(self, row: Row) -> None:
         lines = [f"{row['name']}: {row.get('status', '')}"]
         for t in row.get("tools") or []:
-            lines.append(f"  [{t['tier']}] {t['name']}" + ("  ⚠ " + tr("runs without approval", "chạy không cần duyệt") if t["tier"] == "T0" else ""))
+            lines.append(f"  [{t['tier']}] {t['name']}" + ("  ! " + tr("runs without approval", "chạy không cần duyệt") if t["tier"] == "T0" else ""))
         for t in row.get("skipped") or []:
             lines.append(f"  ✗ {t['name']}: {t['reason']}")
         if len(lines) == 1:
@@ -712,19 +711,18 @@ class PolicyPage(QWidget):
 
 
 class ManagerWindow(QWidget):
-    """Sidebar navigation (collapsible with the hamburger) plus one page at a time."""
+    """The manager pages, one at a time. The main window owns the sidebar and the title bar and calls `open_page`."""
 
-    navigate_out = Signal(str)  # a sidebar item that is not a page here: chat, approvals or settings
+    title_changed = Signal(str)  # the title of the page now showing
 
     def __init__(self, send: Send) -> None:
         super().__init__()
-        self.resize(1080, 600)
         self.pages: dict[str, tuple[QWidget, str]] = {}
         self.status = QLabel()
         P = TablePage
         mem = P(send, {"type": "memory_list"}, "memory", lambda e: e["items"],
                 [("ID", "ID", lambda r: r["id"]), ("Kind", "Loại", lambda r: r["kind"]), ("Status", "Trạng thái",
-                 lambda r: r["status"] + (" ⚠" if r.get("sensitive") else "")), ("Text", "Nội dung", lambda r: r["text"])],
+                 lambda r: r["status"] + (" !" if r.get("sensitive") else "")), ("Text", "Nội dung", lambda r: r["text"])],
                 [("Edit", "Sửa", edit_memory_action), ("Approve", "Duyệt", approve_memory_action), ("Delete", "Xóa", delete_memory_action)],
                 wide=3, searchable=True, facet=("Status", "Trạng thái", lambda r: r["status"]),
                 empty=("No memories yet. The agent saves them as you chat.", "Chưa có bộ nhớ nào. Agent sẽ lưu khi bạn trò chuyện."))
@@ -751,20 +749,10 @@ class ManagerWindow(QWidget):
             self.stack.addWidget(w)
             self.pages[key] = (w, en)
             self._tabs.append((w, en, vi))
-        self.rail = NavRail("memory")
-        self.rail.navigate.connect(self._navigate)
-        self.page_title = QLabel()
-        bar = top_bar(self, self.page_title)
-        bar.layout().addWidget(self.status)  # type: ignore[union-attr]
-        shell = QHBoxLayout(self)
+        shell = QVBoxLayout(self)
         shell.setContentsMargins(0, 0, 0, 0)
         shell.setSpacing(0)
-        shell.addWidget(self.rail)
-        col = QVBoxLayout()
-        col.setSpacing(0)
-        col.addWidget(bar)
-        col.addWidget(self.stack, 1)
-        shell.addLayout(col, 1)
+        shell.addWidget(self.stack, 1)
         # (event type) -> page key; mutations re-request the list they changed
         self._route = {"memory": "memory", "rag": "rag", "mcp": "mcp", "schedules": "schedules", "rules": "rules", "audit": "audit",
                        "usage": "usage", "policy": "policy"}
@@ -778,8 +766,6 @@ class ManagerWindow(QWidget):
         self.retranslate()
 
     def retranslate(self) -> None:
-        self.setWindowTitle(tr("Manager", "Quản lý"))
-        self.rail.retranslate()
         for w, _en, _vi in self._tabs:
             if hasattr(w, "retranslate"):
                 w.retranslate()
@@ -788,51 +774,42 @@ class ManagerWindow(QWidget):
     def _show_title(self) -> None:
         for w, en, vi in self._tabs:
             if w is self.stack.currentWidget():
-                self.page_title.setText(tr(en, vi))
+                self.title_changed.emit(tr(en, vi))
 
     def _refresh_current(self) -> None:
         if refresh := getattr(self.stack.currentWidget(), "refresh", None):
             refresh()
 
-    def _navigate(self, key: str) -> None:
-        if key in self.pages:
-            self.open_page(key)
-        else:
-            self.navigate_out.emit(key)
-
     def open_page(self, key: str) -> None:
         self.stack.setCurrentWidget(self.pages[key][0])
-        self.rail.set_current(key)
         self._show_title()
         self._refresh_current()
-        self.show()
-        self.raise_()
 
     @staticmethod
     def _result_note(ev: Row) -> str:
         t, ok = ev.get("type"), ev.get("ok")
         if t == "memory_deleted":
-            return tr("Deleted.", "Đã xóa.") if ok else "⚠ " + tr("That memory no longer exists.", "Mục này không còn tồn tại.")
+            return tr("Deleted.", "Đã xóa.") if ok else "! " + tr("That memory no longer exists.", "Mục này không còn tồn tại.")
         if t == "memory_updated":
             if not ok:
-                return "⚠ " + tr("That memory no longer exists.", "Mục này không còn tồn tại.")
+                return "! " + tr("That memory no longer exists.", "Mục này không còn tồn tại.")
             if ev.get("status") == "proposed":
                 return tr("Saved. It looks sensitive, so it is waiting for your approval.", "Đã lưu. Nội dung có vẻ nhạy cảm nên đang chờ bạn duyệt.")
             return tr("Saved.", "Đã lưu.")
         if t == "mcp_set":
             return tr("Saved. Reload MCP to apply the change.", "Đã lưu. Hãy tải lại MCP để áp dụng.") if ok \
-                else "⚠ " + tr("That server no longer exists.", "Máy chủ này không còn tồn tại.")
+                else "! " + tr("That server no longer exists.", "Máy chủ này không còn tồn tại.")
         if t == "mcp_added":
             return tr("Server added (disabled). Review it, enable it, then reload.", "Đã thêm máy chủ (đang tắt). Hãy xem lại, bật rồi tải lại.")
         if t == "mcp_removed":
             return tr("Removed. Reload MCP to apply.", "Đã xóa. Hãy tải lại MCP để áp dụng.") if ok \
-                else "⚠ " + tr("That server no longer exists.", "Máy chủ này không còn tồn tại.")
+                else "! " + tr("That server no longer exists.", "Máy chủ này không còn tồn tại.")
         if t == "rag_removed":
             return tr("Removed from the index (the file is untouched).", "Đã xóa khỏi chỉ mục (tệp gốc giữ nguyên).") if ev.get("chunks") \
                 else tr("That document was already gone from the index.", "Tài liệu này không còn trong chỉ mục.")
         if t in ("rag_synced", "rag_added"):
             if t == "rag_synced" and not ev.get("folders"):
-                return "⚠ " + tr("No watched folder is available to sync.", "Không có thư mục theo dõi nào để đồng bộ.")
+                return "! " + tr("No watched folder is available to sync.", "Không có thư mục theo dõi nào để đồng bộ.")
             return rag_summary(ev.get("report") or [])
         return ""
 
@@ -841,7 +818,7 @@ class ManagerWindow(QWidget):
         t = ev.get("type", "")
         if t == "mcp" and ev.get("reloaded"):
             bad = sum(1 for v in ev["servers"].values() if str(v.get("status", "")).startswith("error"))
-            self._note = ("⚠ " if bad else "") + tr(f"Reloaded: {len(ev['servers']) - bad} ok, {bad} failed.", f"Đã tải lại: {len(ev['servers']) - bad} ổn, {bad} lỗi.")
+            self._note = ("! " if bad else "") + tr(f"Reloaded: {len(ev['servers']) - bad} ok, {bad} failed.", f"Đã tải lại: {len(ev['servers']) - bad} ổn, {bad} lỗi.")
         if t in self._route:
             if self.pages[self._route[t]][0].load(ev) is not False:  # type: ignore[attr-defined]
                 self.status.setText(self._note)
@@ -863,5 +840,5 @@ class ManagerWindow(QWidget):
                 if isinstance(w, TablePage):
                     w.settle(ev.get("rid"))  # only the request that failed gets its row back
             if self.isVisible():
-                self.status.setText(f"⚠ {ev.get('message', '')}")
+                self.status.setText(f"! {ev.get('message', '')}")
         return False
