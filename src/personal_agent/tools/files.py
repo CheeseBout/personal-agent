@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import difflib
 import os
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -109,12 +110,26 @@ def undo_change(apply_id: str) -> str:
     return "restored:\n" + "\n".join(restored)
 
 
+def path_args(*keys: str) -> Callable[[dict[str, Any]], list[str]]:
+    """Which resolved paths a call touches (the gate asks a human when any is outside the allowed folders)."""
+    return lambda args: [str(resolve(str(args.get(k) or "."))) for k in keys]
+
+
+def folder_scope(args: dict[str, Any]) -> str | None:
+    """'Approve and remember' for READS outside the allowed folders: per folder, never for denied locations."""
+    p = resolve(str(args.get("path") or "."))
+    if policy().path_zone(p) != "ask":
+        return None
+    return os.path.normcase(os.path.realpath(p if p.is_dir() else p.parent))
+
+
 def _parent_scope(args: dict[str, Any]) -> str | None:
     p = resolve(str(args.get("path", "")))
     return os.path.normcase(os.path.realpath(p.parent)) if policy().check_path(p).allowed else None
 
 
-register(file_read, ToolMeta(tier="T0", untrusted_output=True))
-register(file_write, ToolMeta(tier="T2", side_effects=True, risk="medium", preview_fn=_write_preview, scope_fn=_parent_scope))
+register(file_read, ToolMeta(tier="T0", untrusted_output=True, paths_fn=path_args("path"), scope_fn=folder_scope))
+register(file_write, ToolMeta(tier="T2", side_effects=True, risk="medium", preview_fn=_write_preview, scope_fn=_parent_scope,
+                               paths_fn=path_args("path")))
 register(undo_change, ToolMeta(tier="T2", side_effects=True, risk="medium",
                                preview_fn=lambda a: f"Restore all files changed under change id {a.get('apply_id')}"))

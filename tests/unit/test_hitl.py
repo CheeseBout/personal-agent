@@ -101,8 +101,8 @@ async def test_edit_cannot_escape_the_allowed_folders(env: Path, tmp_path: Path)
     card(await turn(h))
     outside = tmp_path / "outside.txt"
     out = await resume(h, {"w1": {"action": "edit", "args": {"path": str(outside), "content": "pwn"}}})
-    assert not outside.exists()  # approved-but-edited args still hit the tool's own path policy
-    assert any("access denied" in str(m.content) for m in out["messages"] if isinstance(m, ToolMessage))
+    assert not outside.exists()  # an edit that moves the call outside the folders the human approved is rejected
+    assert any("REJECTED" in str(m.content) for m in out["messages"] if isinstance(m, ToolMessage))
 
 
 # ---- remember rules -----------------------------------------------------------------------------------
@@ -277,3 +277,13 @@ async def test_pending_approval_survives_a_daemon_restart(env: Path, tmp_path: P
         assert len(h2.apps.pending("t")) == 1 and not (env / "out.txt").exists()
         out = await resume(h2, {"w1": {"action": "approve"}})
     assert (env / "out.txt").read_text() == "hello" and out["final"] == "finished after restart"
+
+
+async def test_approved_call_outside_the_allowed_folders_runs_only_after_approval(env: Path, tmp_path: Path) -> None:
+    outside = tmp_path / "outside.txt"
+    h = make(tmp_path, ScriptedModel(responses=[write_call(str(outside), "ok"), answer("done")]))
+    c = card(await turn(h))
+    assert "outside the allowed folders" in c["reason"] and not outside.exists()
+    out = await resume(h, {"w1": {"action": "approve"}})
+    assert outside.read_text() == "ok", [str(m.content) for m in out["messages"] if isinstance(m, ToolMessage)]
+    assert not policy().check_path(outside).allowed  # the grant ended with the call

@@ -18,3 +18,4 @@ build/
 
 # graphify output (regenerable: /graphify . --update)
 graphify-out/
+agent-workspace/

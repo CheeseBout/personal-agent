@@ -450,7 +450,7 @@ def build_graph(
                         except Exception:  # noqa: BLE001
                             g2 = None
                         # the human approved a specific risk level: an edit may not change it (up OR down)
-                        if new is None or g2 is None or g2.action == "deny" or (g2.tier, g2.confirm) != (g.tier, g.confirm):
+                        if new is None or g2 is None or g2.action == "deny" or (g2.tier, g2.confirm, g2.outside) != (g.tier, g.confirm, g.outside):
                             approvals.resolve(tid, cid, "rejected")
                             deny(cid, "rejected", "REJECTED: the edited arguments are invalid, not allowed, or change the "
                                  "risk tier - ask again with the new arguments", g.tier, "success")
@@ -476,8 +476,11 @@ def build_graph(
                 "message": "DENIED: the kill switch is engaged" if kill.engaged else "DENIED: no policy decision for this call"}
             audit.log(e["thread"], call["id"], call["name"], call["args"], e["tier"], e["decision"], e["message"])
             return ToolMessage(content=e["message"], name=call["name"], tool_call_id=call["id"], status=e["status"])
+        meta = meta_for(call["name"])
         try:
-            out = await execute(request)
+            # reaching here means the gate allowed the call; for a path outside the allowed folders that means a human approved it
+            with pol.granted(meta.paths_fn(call["args"]) if meta and meta.paths_fn else []):
+                out = await execute(request)
         except Exception as ex:
             audit.log(entry["thread"], call["id"], call["name"], call["args"], entry["tier"], entry["decision"],
                       f"EXCEPTION {type(ex).__name__}")

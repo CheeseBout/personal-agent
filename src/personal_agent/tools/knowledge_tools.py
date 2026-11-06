@@ -12,7 +12,7 @@ from personal_agent.memory.store import KINDS
 from personal_agent.policy.engine import ToolMeta
 from personal_agent.rag.embed import EmbeddingUnavailable
 from personal_agent.rag.loaders import UnsupportedDocument
-from personal_agent.tools.files import resolve
+from personal_agent.tools.files import folder_scope, path_args, resolve
 from personal_agent.tools.registry import cap, policy, register
 
 
@@ -101,9 +101,10 @@ def forget(memory_id: int) -> str:
 
 register(rag_search, ToolMeta(tier="T0", untrusted_output=True))
 register(rag_ingest, ToolMeta(tier="T1", side_effects=True, network=True,  # document text is sent to the embedding provider
-                              preview_fn=lambda a: f"Index (sends the text to the embedding provider): {a.get('path')}"))
+                              preview_fn=lambda a: f"Index (sends the text to the embedding provider): {a.get('path')}",
+                              paths_fn=path_args("path"), scope_fn=folder_scope))
 register(rag_list, ToolMeta(tier="T0"))
-register(rag_remove, ToolMeta(tier="T1", side_effects=True))
+register(rag_remove, ToolMeta(tier="T1", side_effects=True, paths_fn=path_args("path")))
 register(remember, ToolMeta(tier="T1", side_effects=True, tier_fn=_remember_tier, risk="low",
                             preview_fn=lambda a: f"Save to long-term memory ({a.get('kind', 'semantic')}):\n{a.get('text', '')}"))
 register(recall, ToolMeta(tier="T0", untrusted_output=True))

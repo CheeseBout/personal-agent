@@ -13,7 +13,7 @@ Manually: `python -m uv sync --extra ui --extra voice --extra screen --extra obs
 Lookup order: environment > `.env` (`PERSONAL_AGENT_ENV_FILE`, `./.env`, `%APPDATA%\personal-agent\.env`) > Credential Manager. Keys are write-only in the UI and masked everywhere they could leak.
 **Ollama** (`ollama pull bge-m3`) is needed for document search and memory similarity. **Docker Desktop** is needed only for sandboxed code.
 
-**Folders.** The agent may only use folders allowed in `policy.yaml` (default `%USERPROFILE%\Documents\agent-workspace`); add more in Settings → General → "Add a folder". Data lives in `%APPDATA%\personal-agent\`.
+**Folders.** Inside the folders allowed in `policy.yaml` reads are automatic and changes need approval. Anywhere else the agent must ask: every read, list, search, index, edit, move or delete outside them shows an approval card (reads can be remembered per folder, changes never; denied locations stay blocked). Allowed folders are set in `policy.yaml` (default `%USERPROFILE%\Documents\agent-workspace`); add more in Settings → General → "Add a folder". Data lives in `%APPDATA%\personal-agent\`.
 
 ## Talking to the agent
 Vietnamese or English; it answers in your language and introduces itself by its configured name (Settings → General, takes effect on the next turn). Attach files (button, drag-drop, paste an image): images, text/md/csv, docx, pdf, audio (transcribed); at most 4 files and 15 MB.

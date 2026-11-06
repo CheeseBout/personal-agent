@@ -146,3 +146,44 @@ def test_web_search_marks_untrusted_and_survives_errors(monkeypatch: pytest.Monk
 
     monkeypatch.setattr(web, "PROVIDER", boom)
     assert web.web_search.invoke({"query": "q"}).startswith("ERROR")
+
+
+def _tool(name: str):
+    load_tools()
+    m = meta_for(name)
+    assert m is not None
+    return m
+
+
+def test_outside_the_allowed_folders_asks_a_human_instead_of_refusing(env: Path, tmp_path: Path) -> None:
+    out = tmp_path / "elsewhere"
+    out.mkdir()
+    (out / "a.txt").write_text("hello")
+    p = policy()
+    # inside: reads are automatic, writes need approval (unchanged)
+    assert p.evaluate("file_read", _tool("file_read"), {"path": "x.txt"}).action == "allow"
+    assert p.evaluate("file_write", _tool("file_write"), {"path": "x.txt", "content": ""}).tier == "T2"
+    # outside: every file tool needs approval, with a scope that can be remembered for reads only
+    for name, args in [("file_read", {"path": str(out / "a.txt")}), ("file_list", {"path": str(out)}),
+                       ("file_search", {"query": "h", "path": str(out)}), ("rag_ingest", {"path": str(out)}),
+                       ("file_delete", {"path": str(out / "a.txt")}),
+                       ("file_move", {"source": "x.txt", "destination": str(out / "b.txt")})]:
+        g = p.evaluate(name, _tool(name), args)
+        assert (g.action, g.tier) == ("approve", "T2"), name
+    m = _tool("file_read")
+    assert m.scope_fn is not None and m.scope_fn({"path": str(out / "a.txt")}) is not None
+    assert m.scope_fn({"path": "x.txt"}) is None  # inside the workspace: nothing to remember
+    assert _tool("file_delete").scope_fn is None and _tool("file_move").scope_fn is None
+
+
+def test_denied_locations_stay_denied_and_the_tool_refuses_without_an_approval(env: Path, tmp_path: Path) -> None:
+    out = tmp_path / "elsewhere"
+    out.mkdir()
+    (out / "a.txt").write_text("hello")
+    p = policy()
+    assert p.evaluate("file_read", _tool("file_read"), {"path": r"C:\Windows\win.ini"}).action == "deny"
+    assert "denied" in file_read.invoke({"path": str(out / "a.txt")})  # no gate, no grant: refused
+    with p.granted([str(out / "a.txt")]):  # what `guard` does once a human approved
+        assert file_read.invoke({"path": str(out / "a.txt")}) == "hello"
+        assert "denied" in file_read.invoke({"path": str(out / "b.txt")})  # the grant covers only that path
+    assert "denied" in file_read.invoke({"path": str(out / "a.txt")})  # and ends with the call

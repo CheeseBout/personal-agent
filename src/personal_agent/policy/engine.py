@@ -10,7 +10,8 @@ import os
 import re
 import time
 from collections import defaultdict, deque
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
@@ -47,6 +48,7 @@ class ToolMeta:
     tier_fn: Callable[[dict[str, Any]], str] | None = None  # tier depends on the arguments
     preview_fn: Callable[[dict[str, Any]], str] | None = None  # read-only preview/diff for the approval card
     scope_fn: Callable[[dict[str, Any]], str | None] | None = None  # "approve and remember" scope; None = never remember
+    paths_fn: Callable[[dict[str, Any]], list[str]] | None = None  # resolved paths a call touches: outside the allowed folders -> T2
 
 
 @dataclass(frozen=True)
@@ -56,6 +58,7 @@ class Gate:
     reason: str = ""
     risk: str = "low"
     confirm: bool = False  # T3: the user must confirm twice
+    outside: bool = False  # touches a path outside the allowed folders (the approval is for that location)
 
 
 def _norm_cmd(c: str) -> str:
@@ -78,6 +81,18 @@ class PolicyEngine:
         self._mtime = 0.0
         self._cfg: dict[str, Any] = {}
         self._calls: dict[str, deque[float]] = defaultdict(deque)
+        self._grants: list[str] = []  # paths outside the allowed folders that a human approved for the call running right now
+
+    @contextmanager
+    def granted(self, paths: list[str]) -> Iterator[None]:
+        """While the (already approved) call runs, `check_path` accepts these outside paths; denied locations stay denied."""
+        g = [_norm(p) for p in paths]
+        self._grants.extend(g)
+        try:
+            yield
+        finally:
+            for x in g:
+                self._grants.remove(x)
 
     @property
     def cfg(self) -> dict[str, Any]:
@@ -113,16 +128,28 @@ class PolicyEngine:
         risk = meta.risk
         if (r := self.rate_limited(name)) is not None:
             return Gate("deny", tier, r, risk)
+        outside = False
+        if meta.paths_fn:
+            try:
+                zones = [self._zone(p) for p in meta.paths_fn(args)]
+            except Exception:  # noqa: BLE001  bad arguments: the tool validates them itself
+                zones = []
+            if bad := next((why for z, why in zones if z == "deny"), None):
+                return Gate("deny", tier, bad, risk)
+            outside = any(z == "ask" for z, _ in zones)
+            if outside and tier in ("T0", "T1"):
+                tier = "T2"  # reading or indexing outside the allowed folders is always the user's call
         if tier == "T0":
             return Gate("allow", tier)
         if tier == "T1":
             auto = self.cfg.get("tiers", {}).get("T1_auto_approve", True)
             if tainted and meta.side_effects:
-                return Gate("approve", "T2", "this action follows untrusted content (web/file/tool output)", risk)
+                return Gate("approve", "T2", "this action follows untrusted content (web/file/tool output)", risk, outside=outside)
             return Gate("allow", tier) if auto else Gate("approve", tier, "T1 auto-approval is off", risk)
         if tier == "T2":
-            why = "needs your approval" + (" (follows untrusted content)" if tainted else "")
-            return Gate("approve", tier, why, risk)
+            why = ("needs your approval" + (" (outside the allowed folders)" if outside else "")
+                   + (" (follows untrusted content)" if tainted else ""))
+            return Gate("approve", tier, why, risk, outside=outside)
         if self.cfg.get("tiers", {}).get("T3_allow_with_confirmation", False):
             return Gate("approve", "T3", "dangerous action: explicit confirmation required", "critical", confirm=True)
         return Gate("deny", "T3", "dangerous (T3) actions are disabled by policy", "critical")
@@ -141,20 +168,30 @@ class PolicyEngine:
         return None
 
     # ---- argument-level checks used by the tools ---------------------------------------------------
-    def check_path(self, path: str | Path) -> Decision:
+    def _zone(self, path: str | Path) -> tuple[str, str]:
+        """'in' = allowed folders, 'ask' = anywhere else (needs a human), 'deny' = never (denied locations, odd paths)."""
         raw = os.path.expandvars(str(path))
         if raw.startswith(("\\\\", "//")) or ":" in raw[2:]:
-            return Decision(False, "UNC, device and alternate-data-stream paths are not allowed")
+            return "deny", "UNC, device and alternate-data-stream paths are not allowed"
         if any(s not in (".", "..") and s != s.rstrip(". ") for s in re.split(r"[\\/]", raw)):
-            return Decision(False, "path segments ending in a dot or space are not allowed")
+            return "deny", "path segments ending in a dot or space are not allowed"
         p = _norm(path)
         paths = self.cfg.get("paths", {})
         for d in paths.get("deny", []):
             if _inside(p, _norm(d)):
-                return Decision(False, "path is in a denied location")
+                return "deny", "path is in a denied location"
         if any(_inside(p, _norm(a)) for a in paths.get("allow", [])):
+            return "in", ""
+        return "ask", "path is outside the allowed folders"
+
+    def path_zone(self, path: str | Path) -> str:
+        return self._zone(path)[0]
+
+    def check_path(self, path: str | Path) -> Decision:
+        zone, why = self._zone(path)
+        if zone == "in" or (zone == "ask" and any(_inside(_norm(path), g) for g in self._grants)):
             return Decision(True)
-        return Decision(False, "path is outside the allowed folders")
+        return Decision(False, why)
 
     def check_command(self, command: str) -> Decision:
         """Strict allowlist used for commands that run WITHOUT approval."""

@@ -186,9 +186,9 @@ def test_tools_that_read_outside_text_are_marked_untrusted() -> None:
 
 
 def test_only_low_stakes_tools_can_be_remembered_and_control_is_attended_only() -> None:
-    """'Approve and remember' is limited to scoped file edits; anything high-risk always asks again."""
+    """'Approve and remember' is limited to scoped file edits and folder-scoped reads; anything high-risk always asks again."""
     rememberable = {n for n, m in all_tools() if m.scope_fn is not None}
-    assert rememberable <= {"file_write", "file_edit"}, rememberable
+    assert rememberable <= {"file_write", "file_edit", "file_read", "file_list", "file_search", "rag_ingest"}, rememberable
     assert not [n for n, m in all_tools() if m.risk == "high" and m.scope_fn is not None]
     for n in ("ui_act", "schedule_task"):
         m = meta_for(n)

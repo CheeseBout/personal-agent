@@ -11,7 +11,7 @@ from langchain_core.tools import tool
 
 from personal_agent.policy.engine import ToolMeta
 from personal_agent.sandbox.backup import delete_with_backup, new_apply_id, write_with_backup
-from personal_agent.tools.files import _parent_scope, resolve
+from personal_agent.tools.files import _parent_scope, folder_scope, path_args, resolve
 from personal_agent.tools.registry import cap, policy, register
 
 MAX_MOVE_BYTES = 20_000_000
@@ -122,10 +122,13 @@ def _edit_preview(a: dict[str, Any]) -> str:
     return f"Edit {resolve(str(a.get('path', '')))}\n--- replace ---\n{a.get('old', '')[:2000]}\n--- with ---\n{a.get('new', '')[:2000]}"
 
 
-register(file_list, ToolMeta(tier="T0"))
-register(file_search, ToolMeta(tier="T0", untrusted_output=True))
-register(file_edit, ToolMeta(tier="T2", side_effects=True, preview_fn=_edit_preview, scope_fn=_parent_scope))
+register(file_list, ToolMeta(tier="T0", paths_fn=path_args("path"), scope_fn=folder_scope))
+register(file_search, ToolMeta(tier="T0", untrusted_output=True, paths_fn=path_args("path"), scope_fn=folder_scope))
+register(file_edit, ToolMeta(tier="T2", side_effects=True, preview_fn=_edit_preview, scope_fn=_parent_scope,
+                             paths_fn=path_args("path")))
 register(file_move, ToolMeta(tier="T2", side_effects=True, risk="high",
-                             preview_fn=lambda a: f"Move\n  {resolve(str(a.get('source', '')))}\n  -> {resolve(str(a.get('destination', '')))}"))
+                             preview_fn=lambda a: f"Move\n  {resolve(str(a.get('source', '')))}\n  -> {resolve(str(a.get('destination', '')))}",
+                             paths_fn=path_args("source", "destination")))
 register(file_delete, ToolMeta(tier="T2", side_effects=True, risk="high",
-                               preview_fn=lambda a: f"DELETE {resolve(str(a.get('path', '')))} (backed up, undoable)"))
+                               preview_fn=lambda a: f"DELETE {resolve(str(a.get('path', '')))} (backed up, undoable)",
+                               paths_fn=path_args("path")))

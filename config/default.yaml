@@ -70,7 +70,7 @@ rag:
   chunk_chars: 900
   overlap_chars: 120
   top_k: 5
-  watch: []               # e.g. ['%USERPROFILE%\Documents\agent-workspace\docs'] - must be inside paths.allow
+  watch: []               # e.g. ['C:\Users\triba\Documents\Project\personal-agent\agent-workspace\docs'] - must be inside paths.allow
 memory:
   reflect: true           # after planned tasks, propose memories (one cheap Haiku call)
   auto_k: 5               # memories injected into the prompt at task start (local search, no API call)
