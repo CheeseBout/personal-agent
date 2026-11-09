@@ -67,7 +67,8 @@ def build_chat_model(ref: ModelRef, spec: ModelSpec | None = None, retries: int 
 
 def _usable(ref: ModelRef) -> bool:
     """Can this provider be called at all (its key exists, or it needs none)?"""
-    return ref.provider == "ollama" or bool(get_secret(KEY_NAMES.get(ref.provider, "")))
+    # unknown provider => False without a lookup: get_secret("") can hit an unnamed Credential Manager entry
+    return ref.provider == "ollama" or (ref.provider in KEY_NAMES and bool(get_secret(KEY_NAMES[ref.provider])))
 
 
 def _lazy(build: Callable[[], Runnable[Any, Any]]) -> Runnable[Any, Any]:
