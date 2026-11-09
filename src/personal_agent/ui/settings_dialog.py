@@ -212,7 +212,8 @@ class SettingsDialog(QWidget):
             lbl.setText(tr(en, vi))
         self.folder_btn.setText(tr("Add a folder…", "Thêm thư mục…"))
         for col, sw in self.hl_swatches.items():  # a colour name, not the hex code, is what a screen reader should say
-            name = tr(*self.hl_names[col])
+            en, vi = self.hl_names[col]
+            name = tr(en, vi)
             sw.setToolTip(f"{name} ({col})")
             sw.setAccessibleName(name)
         self.hl_custom.setText(tr("Custom…", "Tùy chọn…"))
