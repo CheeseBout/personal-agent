@@ -10,6 +10,7 @@ Squaring the coverage makes a lone shared word nearly irrelevant while an exact 
 
 from __future__ import annotations
 
+import json
 import re
 import sqlite3
 import unicodedata
@@ -67,25 +68,33 @@ def fts_query(text: str) -> str | None:
     return " OR ".join(f'"{t}"' for t in toks) or None
 
 
-def dense(db: sqlite3.Connection, qvec: list[float], k: int) -> dict[int, float]:
-    """rowid -> cosine similarity (vectors are L2-normalised, so cos = 1 - d^2 / 2)."""
-    rows = db.execute("SELECT rowid, distance FROM vec WHERE embedding MATCH ? AND k = ? ORDER BY distance", (blob(qvec), k)).fetchall()
-    return {r[0]: 1.0 - float(r[1]) ** 2 / 2.0 for r in rows}
+_ONLY = " AND rowid IN (SELECT value FROM json_each(?))"  # json_each: no bound-parameter limit on the id list
 
 
-def sparse(db: sqlite3.Connection, text: str, k: int) -> list[int]:
+def dense(db: sqlite3.Connection, qvec: list[float], k: int, only: list[int] | None = None) -> dict[int, float]:
+    """rowid -> cosine similarity (vectors are L2-normalised, so cos = 1 - d^2 / 2). `only` restricts the KNN to those rowids."""
+    sql = "SELECT rowid, distance FROM vec WHERE embedding MATCH ? AND k = ?" + (_ONLY if only is not None else "") + " ORDER BY distance"
+    args = (blob(qvec), k) + ((json.dumps(only),) if only is not None else ())
+    return {r[0]: 1.0 - float(r[1]) ** 2 / 2.0 for r in db.execute(sql, args).fetchall()}
+
+
+def sparse(db: sqlite3.Connection, text: str, k: int, only: list[int] | None = None) -> list[int]:
     q = fts_query(text)
     if q is None:
         return []
-    rows = db.execute("SELECT rowid FROM fts WHERE fts MATCH ? ORDER BY bm25(fts) LIMIT ?", (q, k)).fetchall()
-    return [r[0] for r in rows]
+    sql = "SELECT rowid FROM fts WHERE fts MATCH ?" + (_ONLY if only is not None else "") + " ORDER BY bm25(fts) LIMIT ?"
+    args = (q,) + ((json.dumps(only),) if only is not None else ()) + (k,)
+    return [r[0] for r in db.execute(sql, args).fetchall()]
 
 
 def fuse(db: sqlite3.Connection, query: str, qvec: list[float] | None, text_of: Callable[[int], str],
-         k: int = 50) -> list[tuple[int, float]]:
-    """Candidates from both retrievers, best first. Without a query vector (embeddings down) only coverage counts."""
-    cos = dense(db, qvec, k) if qvec is not None else {}
-    cand = list(dict.fromkeys([*cos, *sparse(db, query, k)]))
+         k: int = 50, only: list[int] | None = None) -> list[tuple[int, float]]:
+    """Candidates from both retrievers, best first. Without a query vector (embeddings down) only coverage counts.
+    `only` (chunk ids) filters inside both retrievers, so a scoped search is never starved by other documents' chunks."""
+    if only is not None and not only:
+        return []
+    cos = dense(db, qvec, k, only) if qvec is not None else {}
+    cand = list(dict.fromkeys([*cos, *sparse(db, query, k, only)]))
     qt = terms(query)
     out: list[tuple[int, float]] = []
     for rid in cand:

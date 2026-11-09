@@ -129,12 +129,17 @@ class RagIndex:
                 r = db.execute("SELECT heading, text FROM chunks WHERE id=?", (cid,)).fetchone()
                 return f"{r['heading']} {r['text']}" if r else ""
 
-            fused = hybrid.fuse(db, query, qvec, text_of, 50)
+            only: list[int] | None = None
+            if source:  # match by full path or file name, then filter inside the retrievers
+                srcs = [d["source"] for d in self.documents() if d["source"] == source or Path(d["source"]).name.lower() == source.lower()]
+                only = [r[0] for s in srcs for r in db.execute(
+                    "SELECT c.id FROM chunks c JOIN docs d ON d.id=c.doc_id WHERE d.source=?", (s,))]
+            fused = hybrid.fuse(db, query, qvec, text_of, 50, only)
             hits: list[Hit] = []
             for cid, score in fused:
                 r = db.execute("SELECT c.text, c.heading, c.page, d.source FROM chunks c JOIN docs d ON d.id=c.doc_id "
                                "WHERE c.id=?", (cid,)).fetchone()
-                if r is None or (source and Path(r["source"]).name.lower() != source.lower() and r["source"] != source):
+                if r is None:
                     continue
                 hits.append(Hit(r["text"], r["source"], r["heading"], r["page"], score))
                 if len(hits) >= k:

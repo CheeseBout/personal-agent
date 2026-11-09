@@ -149,6 +149,19 @@ def test_remove_filter_and_folder_sync(tmp_path: Path) -> None:
     assert ix.remove(str(d / "b.md")) > 0 and ix.documents() == []
 
 
+def test_scoped_search_is_not_starved_by_other_documents(tmp_path: Path) -> None:
+    ix = index(tmp_path)
+    d = tmp_path / "docs"
+    d.mkdir()
+    # 80 chunks of "big.md" all match the query better than the single chunk of "small.md"
+    (d / "big.md").write_text("".join(f"# S{i}\nalpha alpha alpha\n" for i in range(80)), encoding="utf-8")
+    (d / "small.md").write_text("# Z\nalpha zebra", encoding="utf-8")
+    ix.sync_folder(d)
+    hits = ix.search("alpha alpha", k=3, source="small.md")[0]
+    assert [Path(h.source).name for h in hits] == ["small.md"]
+    assert ix.search("alpha", k=3, source="nope.md")[0] == []
+
+
 def test_changing_the_embedding_model_resets_vectors(tmp_path: Path) -> None:
     ix, f = index(tmp_path), tmp_path / "n.md"
     f.write_text("# T\nsome text", encoding="utf-8")
