@@ -8,6 +8,7 @@ from starlette.websockets import WebSocketDisconnect
 
 from fakes import TASK, FakeBrain, ScriptedModel, answer, call
 from personal_agent.core.app import create_app
+from personal_agent.settings.settings import load_settings
 
 AUTH = {"Authorization": "Bearer test-token"}
 
@@ -113,6 +114,8 @@ def test_usage_and_rename_commands(tmp_path: Path) -> None:
 
 def test_missing_api_key_is_reported_not_crashed(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("personal_agent.llm.factory.get_secret", lambda name: None)
+    s = load_settings()  # the default classifier is local Ollama (needs no key); use a keyed model so "no key" is what fails
+    s.models["classifier"] = s.models["planner"]
     app = create_app(db_path=tmp_path / "c.db", token="test-token")  # real LiveBrain
     with TestClient(app) as c, c.websocket_connect("/ws", headers=AUTH) as ws:
         hello(ws)
