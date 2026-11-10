@@ -6,7 +6,7 @@ Provider SDKs are imported lazily so an idle daemon only pays for what it uses.
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
-from typing import Any
+from typing import Any, cast
 
 from langchain_core.language_models import BaseChatModel
 from langchain_core.runnables import Runnable, RunnableConfig, RunnableLambda
@@ -23,6 +23,16 @@ KEY_NAMES = {
 }
 OPENROUTER_URL = "https://openrouter.ai/api/v1"
 OLLAMA_URL = "http://localhost:11434"  # override with OLLAMA_HOST; local, so no API key
+
+
+class StructuredParseError(RuntimeError):
+    """A model answered, but not with JSON that fits the schema (raised so the fallback chain gets a turn)."""
+
+
+def _require_parsed(out: dict[str, Any]) -> dict[str, Any]:
+    if out.get("parsed") is None:
+        raise StructuredParseError(type(out.get("parsing_error")).__name__)
+    return out
 
 
 class MissingSecretError(RuntimeError):
@@ -108,7 +118,9 @@ def get_chat_model(
         if schema is not None:
             # Forced tool-calling is unreliable on current Claude models; use native JSON-schema output.
             method = "json_schema" if ref.provider == "anthropic" else None
-            return m.with_structured_output(schema, include_raw=True, **({"method": method} if method else {}))
+            # include_raw keeps usage visible, but a failed parse is then a quiet parsed=None: raise it so with_fallbacks retries
+            chain: Runnable[Any, Any] = m.with_structured_output(schema, include_raw=True, **({"method": method} if method else {}))
+            return chain | RunnableLambda(cast(Any, _require_parsed))
         return m.bind_tools(list(tools)) if tools else m
 
     primary = make(spec)

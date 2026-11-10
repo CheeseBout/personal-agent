@@ -6,6 +6,7 @@ Budgets, daily caps and no-progress detection are enforced in code, never left t
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import copy
 import json
 import time
@@ -45,10 +46,12 @@ from personal_agent.graph.limits import charge, exceeded, is_failure, new_used, 
 from personal_agent.graph.report import build_report
 from personal_agent.graph.schemas import AgentState, Goal, Intent, Verdict
 from personal_agent.graph.workers import WorkerEnv, failed_result, run_worker
+from personal_agent.llm.factory import StructuredParseError
 from personal_agent.memory.reflect import REFLECT_PROMPT, Reflection, save_reflection
 from personal_agent.memory.store import MemoryStore
 from personal_agent.observability.audit import AuditLog
 from personal_agent.observability.logging import redact
+from personal_agent.observability.metrics import Metrics
 from personal_agent.observability.usage import Meter
 from personal_agent.policy.approvals import ApprovalStore
 from personal_agent.policy.killswitch import KillSwitch
@@ -113,6 +116,7 @@ def build_graph(
     mem = memory or services.memory()
     brain = brain or LiveBrain(cfg)
     meter = meter or Meter(data_dir() / "usage.db", cfg.pricing)
+    metrics = Metrics(data_dir() / "usage.db", cfg.observability.metrics_keep_days)
     audit = audit or AuditLog(data_dir() / "audit.db")
     approvals = approvals or ApprovalStore(data_dir() / "approvals.db")
     kill = kill or KillSwitch()
@@ -129,7 +133,13 @@ def build_graph(
         return charge(used, raw, cost)
 
     async def structured(role: str, schema: type[BaseModel], msgs: Sequence[BaseMessage], used: dict[str, Any]) -> Any:
-        out = await brain.structured(role, schema).ainvoke(msgs)
+        try:
+            out = await brain.structured(role, schema).ainvoke(msgs)
+        except StructuredParseError:  # every model in the chain answered with unusable JSON: callers have a safe default
+            log.warning("structured_parse_failed", role=role, schema=schema.__name__)
+            with contextlib.suppress(Exception):  # a metric must never break a turn
+                metrics.event("structured_parse_failed", role, False, 0)
+            return None, used
         return out.get("parsed"), charge_call(used, out.get("raw"), role)
 
     def halt(state: AgentState) -> str | None:
