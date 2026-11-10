@@ -37,6 +37,7 @@ from personal_agent.graph.builder import build_graph, resume_command
 from personal_agent.graph.context import text_of
 from personal_agent.llm.errors import classify_provider_error
 from personal_agent.llm.factory import MissingSecretError
+from personal_agent.llm.warmup import warm_ollama
 from personal_agent.observability.audit import AuditLog
 from personal_agent.observability.logging import redact, redact_obj
 from personal_agent.observability.metrics import Metrics
@@ -117,6 +118,8 @@ def create_app(brain: Brain | None = None, db_path: Path | None = None, token: s
             sched = services.scheduler()
             sched.run_job = run_scheduled
             sched.start()
+            if brain is None:  # a real daemon, not a test with a scripted brain
+                warm_ollama(settings)
             log.info("daemon_ready")
             yield
             await sched.stop()
