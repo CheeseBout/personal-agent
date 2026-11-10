@@ -1,8 +1,8 @@
 """Preload the local Ollama models at start-up so the first request does not pay the load time.
 
 Measured 2026-11-10: a cold gemma4:e2b took 25 s (timing out the 30 s classifier call), a cold bge-m3 7-43 s.
-Best effort: Ollama off or a model missing is logged and ignored. Keeping them loaded afterwards is the
-server's job (OLLAMA_KEEP_ALIVE); this only does the first load.
+Best effort: Ollama off or a model missing is logged and ignored. `keep_alive: -1` pins the models in memory
+until Ollama stops, which costs VRAM/RAM on small machines.
 """
 
 from __future__ import annotations

@@ -68,12 +68,13 @@ Limits are enforced in code, not by the model: per-task steps / tool calls / sec
 ## Models and routing (`config/default.yaml`, editable in Settings)
 | Role | Default | Notes |
 |---|---|---|
-| classifier, planner, critic, vision | Claude Haiku 5.5 | structured output; fallbacks Gemini flash-lite → gpt-4o |
+| planner, critic | Claude Haiku 5.5 | structured output; fallbacks Gemini flash-lite → gpt-4o |
+| classifier, vision | local `gemma4:e2b` (Ollama, thinking off) | fallbacks Haiku → Gemini flash-lite → gpt-4o; a reply that is not valid JSON also moves to the next model |
 | fast, summarizer, worker | Gemini 3.5 flash-lite | fallbacks Haiku → gpt-4o |
 | embeddings | Ollama `bge-m3`, 1024 dims | local, multilingual; changing model/dimension re-indexes automatically |
 | speech-to-text / text-to-speech | Gemini audio / edge-tts | STT is a metered daemon call; TTS runs in the UI |
 
-Fallback models are built only when the primary fails (a provider SDK costs 40-90 MB). Unknown models are priced pessimistically so nothing looks free. A local classifier (`gemma4:e4b`) was tried and rejected: 13-65 s per call and invalid JSON.
+Fallback models are built only when the primary fails (a provider SDK costs 40-90 MB). Unknown models are priced pessimistically so nothing looks free. `gemma4:e4b` with thinking on was rejected (13-65 s per call, invalid JSON); `gemma4:e2b` with thinking off passed the 10 evals at ~3-4 s more per turn than Haiku (measured 2026-11-02), so it is the default for classifier and vision.
 
 ## Tools
 All registered in `tools/registry.py` with policy metadata (tier, side effects, untrusted output, risk, preview, "remember" scope, attended-only).
