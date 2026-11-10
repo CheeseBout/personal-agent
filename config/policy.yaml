@@ -9,7 +9,7 @@ tiers:
 approval:
   timeout_s: 600          # an unanswered approval expires and counts as a rejection
 paths:
-  allow: ['C:\Users\triba\Documents\Project\personal-agent\agent-workspace']  # machine-specific; the first entry is also the agent's working folder
+  allow: ['%USERPROFILE%\Documents\agent-workspace']  # the first entry is also the agent's working folder (created at start-up)
   deny: ['C:\Windows', 'C:\Program Files', 'C:\Program Files (x86)', '%APPDATA%\personal-agent']
 commands:
   # Commands matching a pattern run without approval, as argv (no shell). Anything else is T2 (approval).

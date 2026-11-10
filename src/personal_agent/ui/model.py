@@ -47,11 +47,18 @@ class Session:
         self.used: dict[str, Any] = {}
         self.usage: dict[str, Any] = {}
         self.killed = False
+        self._live: Entry | None = None  # the answer being streamed token by token
+
+    def _drop_live(self) -> None:
+        if self._live is not None and self._live in self.transcript:
+            self.transcript.remove(self._live)
+        self._live = None
 
     # ---- local actions --------------------------------------------------------------------------
     def user_says(self, text: str, attachments: list[str] | None = None) -> None:
         self.transcript.append(Entry("user", text, {"attachments": attachments or []}))
         self.busy, self.plan, self.steps, self.verdict, self.intent = True, None, [], "", None
+        self._live = None
 
     def pending_for_thread(self) -> dict[str, list[dict[str, Any]]]:
         by: dict[str, list[dict[str, Any]]] = {}
@@ -82,6 +89,7 @@ class Session:
             self.transcript.append(Entry("event", f"[{ev.get('role')}] {ev.get('status')}: {ev.get('summary', '')}"))
             ch |= {"transcript", "plan"}
         elif t == "tool_call":
+            self._drop_live()  # prose streamed before a tool call is not the answer
             self.transcript.append(Entry("event", f"tool: {ev.get('name')} {json.dumps(ev.get('args', {}), ensure_ascii=False)[:160]}"))
             ch.add("transcript")
         elif t == "tool_result":
@@ -102,14 +110,23 @@ class Session:
                 self.approvals[a["call_id"]] = normalize_approval({**a, "thread_id": a.get("thread_id", ev.get("thread_id"))})
             ch.add("approvals")
         elif t == "paused":
+            self._drop_live()
             self.busy = False
             ch |= {"busy", "approvals"}
+        elif t == "token":
+            if self._live is None:
+                self._live = Entry("agent", "")
+                self.transcript.append(self._live)
+            self._live.text += str(ev.get("text", ""))
+            ch.add("transcript")
         elif t == "final":
+            self._drop_live()
             self.busy, self.used = False, dict(ev.get("used") or {})
             note = f" (stopped: {ev['stopped']})" if ev.get("stopped") else ""
             self.transcript.append(Entry("agent", str(ev.get("text", "")) + note, {"used": self.used}))
             ch |= {"transcript", "busy", "usage"}
         elif t == "error":
+            self._drop_live()
             self.busy = False
             self.transcript.append(Entry("error", f"{ev.get('code')}: {ev.get('message')}"))
             ch |= {"transcript", "busy"}
@@ -120,6 +137,7 @@ class Session:
             self.agent_name = str(ev.get("name", self.agent_name))
             ch.add("name")
         elif t == "killed":
+            self._drop_live()
             self.busy, self.killed = False, True
             self.transcript.append(Entry("error", f"kill switch engaged ({ev.get('threads', 0)} task(s) stopped)"))
             ch |= {"transcript", "busy", "killed"}

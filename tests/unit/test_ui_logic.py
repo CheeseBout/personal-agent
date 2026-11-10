@@ -247,3 +247,18 @@ def test_policy_add_path_also_handles_the_one_line_form_and_keeps_comments(tmp_p
     allowed = yaml.safe_load(text)["paths"]["allow"]
     assert allowed[0] == "C:\\a" and str(folder) in allowed  # the quote in the folder name survived
 
+
+
+def test_streamed_tokens_become_one_entry_that_the_final_answer_replaces() -> None:
+    from personal_agent.ui.model import Session
+
+    s = Session()
+    s.user_says("hi")
+    s.apply({"type": "token", "text": "Hel"})
+    s.apply({"type": "token", "text": "lo"})
+    assert [e.text for e in s.transcript if e.kind == "agent"] == ["Hello"]
+    s.apply({"type": "tool_call", "name": "x", "args": {}})  # prose before a tool call is not the answer
+    assert not [e for e in s.transcript if e.kind == "agent"]
+    s.apply({"type": "token", "text": "Done"})
+    s.apply({"type": "final", "text": "Done."})
+    assert [e.text for e in s.transcript if e.kind == "agent"] == ["Done."]

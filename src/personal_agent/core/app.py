@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import contextlib
 import os
 import re
 import secrets
@@ -15,7 +16,7 @@ from typing import Any
 
 import structlog
 from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
-from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
+from langchain_core.messages import AIMessage, AIMessageChunk, HumanMessage, ToolMessage
 from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 from langgraph.errors import GraphRecursionError
 from starlette.websockets import WebSocketDisconnected
@@ -54,6 +55,7 @@ from personal_agent.settings.secrets import get_api_token
 from personal_agent.settings.settings import data_dir, load_settings, set_agent_name
 from personal_agent.storage import ensure_db_ok
 from personal_agent.tools import procs
+from personal_agent.tools.files import workspace
 from personal_agent.tools.registry import policy
 from personal_agent.voice import stt
 
@@ -82,6 +84,8 @@ def create_app(brain: Brain | None = None, db_path: Path | None = None, token: s
         from personal_agent.tools.sandbox_tools import sandbox  # lazy: no Docker work unless used
 
         s = app.state
+        with contextlib.suppress(OSError):  # first run: the folder the policy names (and the UI promises) must exist
+            workspace().mkdir(parents=True, exist_ok=True)
         s.meter = Meter(data_dir() / "usage.db", settings.pricing)
         s.metrics = Metrics(data_dir() / "usage.db", settings.observability.metrics_keep_days)
         s.tracing = Tracing(settings, s.metrics)
@@ -495,7 +499,13 @@ def create_app(brain: Brain | None = None, db_path: Path | None = None, token: s
         config = app.state.tracing.run_config(tid, settings.budgets.max_steps * 8 + 40)
         final, paused = "", False
         try:
-            async for chunk in app.state.graph.astream(graph_input, config, stream_mode="updates"):
+            async for mode, chunk in app.state.graph.astream(graph_input, config, stream_mode=["updates", "messages"]):
+                if mode == "messages":  # only the chat/tool loop speaks prose; classify/plan/verify emit JSON
+                    piece, meta = chunk
+                    if (meta.get("langgraph_node") == "agent" and isinstance(piece, AIMessageChunk)
+                            and not piece.tool_call_chunks and (tok := text_of(piece.content))):
+                        await send({"type": "token", "text": redact(tok)})
+                    continue
                 for node, update in chunk.items():
                     if node == "__interrupt__":
                         paused = True
