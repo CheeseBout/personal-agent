@@ -19,3 +19,7 @@ build/
 # graphify output (regenerable: /graphify . --update)
 graphify-out/
 agent-workspace/
+# Electron UI
+node_modules/
+electron-ui/out/
+electron-ui/dist/
