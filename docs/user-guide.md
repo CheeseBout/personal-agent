@@ -6,8 +6,8 @@ python -m pip install --user uv
 .\scripts\run.ps1            # installs everything, starts the daemon and the desktop UI
 .\scripts\run.ps1 -Chat      # terminal chat instead of the UI
 ```
-Manually: `python -m uv sync --extra ui --extra voice --extra screen --extra observability --extra mcp`, then `python -m uv run agent-core` (daemon, 127.0.0.1:8765) and `python -m uv run agent-ui` (or `agent-chat`).
-`agent-ui` starts the daemon itself when it is not running. A packaged Windows build is described in [development.md](development.md).
+Manually: `python -m uv sync --extra voice --extra screen --extra observability --extra mcp`, then `python -m uv run agent-core` (daemon, 127.0.0.1:8765) and either `python -m uv run agent-chat` or the desktop UI: `npm --prefix electron-ui install` once, then `npm --prefix electron-ui run start` (needs Node.js 20+).
+The desktop UI starts the daemon itself when it is not running. A packaged Windows build is described in [development.md](development.md).
 
 **Keys.** The first-run wizard stores a key in Windows Credential Manager and tests it. Alternatively copy `.env.example` to `.env` (git-ignored) and fill in `ANTHROPIC_API_KEY`, `GOOGLE_API_KEY`, ...
 Lookup order: environment > `.env` (`PERSONAL_AGENT_ENV_FILE`, `./.env`, `%APPDATA%\personal-agent\.env`) > Credential Manager. Keys are write-only in the UI and masked everywhere they could leak.

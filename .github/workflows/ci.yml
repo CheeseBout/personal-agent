@@ -17,8 +17,6 @@ jobs:
   test:
     runs-on: windows-latest
     timeout-minutes: 30
-    env:
-      QT_QPA_PLATFORM: offscreen
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
@@ -27,7 +25,25 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: uv sync --frozen --group dev --extra mcp --extra ui --extra voice --extra screen --extra observability
+      - run: uv sync --frozen --group dev --extra mcp --extra voice --extra screen --extra observability
       - run: uv run ruff check .
       - run: uv run mypy src
       - run: uv run pytest -q
+
+  ui:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: electron-ui
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: electron-ui/package-lock.json
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build

@@ -3,7 +3,8 @@
 
 Run after scripts/build.ps1:  python -m uv run python scripts/smoke_packaged.py [--chat]
 --chat also sends one tiny real question (about $0.0005; needs API keys in ./.env) to prove the lazily imported provider SDKs are in the bundle,
-and starts agent-ui.exe / agent-chat.exe briefly to prove they launch.
+and starts agent-chat.exe briefly to prove it launches.
+The packaged desktop UI (ui/agent-ui.exe) is always started against that daemon and must connect to it.
 """
 
 import asyncio
@@ -87,14 +88,34 @@ if ready is not None:
 
         ev = asyncio.run(ask())
         check("a real question is answered by the packaged daemon (provider SDKs bundled)", ev["type"] == "final" and "391" in ev.get("text", ""), str(ev)[:120])
-        for name, args in (("agent-ui.exe", ["--no-daemon", "--no-avatar"]), ("agent-chat.exe", [])):
-            e2 = {**env, "QT_QPA_PLATFORM": "offscreen", "PERSONAL_AGENT_ENV_FILE": "nul"}
-            q = subprocess.Popen([str(BUNDLE / name), *args], env=e2, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            time.sleep(8)
-            alive = q.poll() is None
-            check(f"{name} starts and keeps running", alive or name == "agent-chat.exe", f"exit code {q.poll()}")
-            if alive:
-                q.terminate()
+        e2 = {**env, "PERSONAL_AGENT_ENV_FILE": "nul"}
+        q = subprocess.Popen([str(BUNDLE / "agent-chat.exe")], env=e2, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        time.sleep(8)
+        check("agent-chat.exe starts", True, f"exit code {q.poll()}")
+        if q.poll() is None:
+            q.terminate()
+    ui = BUNDLE / "ui" / "agent-ui.exe"
+    if ui.is_file():  # the packaged UI finds agent-core.exe next to its folder, asks it for the connection and registers with the daemon
+        async def ui_connects() -> bool:
+            async with connect(f"ws://127.0.0.1:{port}/ws", additional_headers={"Authorization": "Bearer smoke"}) as ws:
+                await ws.recv()
+                for _ in range(40):
+                    await ws.send(json.dumps({"type": "about"}))
+                    while (ev := json.loads(await ws.recv()))["type"] != "about":
+                        pass
+                    if ev.get("clients", 0) >= 2:  # this probe and the UI
+                        return True
+                    await asyncio.sleep(0.5)
+                return False
+
+        e3 = {**env, "PERSONAL_AGENT_NO_DAEMON": "1", "PERSONAL_AGENT_ENV_FILE": "nul"}
+        u = subprocess.Popen([str(ui), f"--user-data-dir={home / 'electron'}"], env=e3, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        try:
+            check("the packaged desktop UI starts and connects to the packaged daemon", asyncio.run(ui_connects()))
+        finally:
+            subprocess.run(["taskkill", "/F", "/T", "/PID", str(u.pid)], capture_output=True, check=False)
+    else:
+        check("the packaged desktop UI exists (ui/agent-ui.exe)", False, "run scripts/build.ps1")
     import psutil
 
     rss = max(x.memory_info().rss for x in [psutil.Process(p.pid), *psutil.Process(p.pid).children(recursive=True)]) / 1048576

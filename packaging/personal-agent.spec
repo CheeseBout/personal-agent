@@ -1,5 +1,6 @@
-# PyInstaller spec: one folder holding agent-core.exe (daemon), agent-ui.exe (desktop, no console) and agent-chat.exe (terminal),
-# sharing one copy of the libraries. Build with scripts/build.ps1. Run from the repo root.
+# PyInstaller spec: one folder holding agent-core.exe (daemon) and agent-chat.exe (terminal), sharing one copy of the libraries.
+# The desktop UI is the Electron app in electron-ui/; scripts/build.ps1 builds both and puts the UI into this folder's ui\ subfolder.
+# Run from the repo root.
 from PyInstaller.utils.hooks import collect_all, collect_submodules
 
 ROOT = SPECPATH.rsplit("\\", 1)[0] if "\\" in SPECPATH else SPECPATH.rsplit("/", 1)[0]
@@ -16,9 +17,7 @@ for pkg in ("sqlite_vec", "ddgs", "comtypes", "langfuse", "imagehash", "recurrin
     datas, binaries, hidden = datas + d, binaries + b, hidden + h
 hidden += ["aiosqlite", "websockets.asyncio.client", "PIL.ImageDraw", "psutil", "mss.windows", "winreg", "google.genai", "openai", "anthropic"]
 
-EXCLUDES = ["tkinter", "matplotlib", "IPython", "pytest", "mypy", "ruff", "playwright", "fastembed", "faster_whisper", "torch", "tensorflow",
-            "PySide6.QtWebEngineCore", "PySide6.QtWebEngineWidgets", "PySide6.QtQuick", "PySide6.QtQml", "PySide6.Qt3DCore", "PySide6.QtCharts",
-            "PySide6.QtDataVisualization", "PySide6.QtPdf", "PySide6.QtBluetooth", "PySide6.QtSensors", "PySide6.QtNfc"]
+EXCLUDES = ["tkinter", "matplotlib", "IPython", "pytest", "mypy", "ruff", "playwright", "fastembed", "faster_whisper", "torch", "tensorflow", "PySide6"]
 
 
 def analysis(script):
@@ -26,11 +25,11 @@ def analysis(script):
                     hookspath=[], runtime_hooks=[], excludes=EXCLUDES, noarchive=False)
 
 
-core, ui, chat = analysis("launch_core.py"), analysis("launch_ui.py"), analysis("launch_chat.py")
-MERGE((core, "agent-core", "agent-core"), (ui, "agent-ui", "agent-ui"), (chat, "agent-chat", "agent-chat"))
+core, chat = analysis("launch_core.py"), analysis("launch_chat.py")
+MERGE((core, "agent-core", "agent-core"), (chat, "agent-chat", "agent-chat"))
 
 exes = []
-for a, name, console in ((core, "agent-core", True), (ui, "agent-ui", False), (chat, "agent-chat", True)):
+for a, name, console in ((core, "agent-core", True), (chat, "agent-chat", True)):
     pyz = PYZ(a.pure)
     exes.append(EXE(pyz, a.scripts, [], exclude_binaries=True, name=name, console=console, icon=None, upx=False))
-COLLECT(*exes, *[x for a in (core, ui, chat) for x in (a.binaries, a.datas)], strip=False, upx=False, name="personal-agent")
+COLLECT(*exes, *[x for a in (core, chat) for x in (a.binaries, a.datas)], strip=False, upx=False, name="personal-agent")

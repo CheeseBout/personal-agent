@@ -32,6 +32,7 @@ SEEN: dict[int, list[str]] = {}
 
 
 def start(title: str, x: int, y: int) -> subprocess.Popen[str]:
+    # The target window is a small Qt program; Qt is not a dependency of this project any more, hence `--with PySide6` (see the header).
     p = subprocess.Popen([sys.executable, str(Path(__file__).with_name("_screen_target.py")), title, str(x), str(y)], stdout=subprocess.PIPE, text=True, encoding="utf-8")
     assert p.stdout and p.stdout.readline().strip() == "READY"
     box = SEEN.setdefault(p.pid, [])

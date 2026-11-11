@@ -23,8 +23,8 @@ UninstallDisplayName={#AppName}
 Source: "..\dist\personal-agent\*"; DestDir: "{app}"; Flags: recursesubdirs ignoreversion
 
 [Icons]
-Name: "{group}\{#AppName}"; Filename: "{app}\agent-ui.exe"
-Name: "{autodesktop}\{#AppName}"; Filename: "{app}\agent-ui.exe"; Tasks: desktopicon
+Name: "{group}\{#AppName}"; Filename: "{app}\ui\agent-ui.exe"
+Name: "{autodesktop}\{#AppName}"; Filename: "{app}\ui\agent-ui.exe"; Tasks: desktopicon
 
 [Tasks]
 Name: "desktopicon"; Description: "Create a desktop shortcut"; Flags: unchecked
@@ -33,10 +33,10 @@ Name: "autostart"; Description: "Start {#AppName} when I sign in to Windows"; Fl
 [Registry]
 ; the UI also has its own Settings -> General -> "Start with Windows" switch (same HKCU Run key)
 Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: string; ValueName: "personal-agent-ui"; \
-  ValueData: """{app}\agent-ui.exe"""; Flags: uninsdeletevalue; Tasks: autostart
+  ValueData: """{app}\ui\agent-ui.exe"""; Flags: uninsdeletevalue; Tasks: autostart
 
 [Run]
-Filename: "{app}\agent-ui.exe"; Description: "Start {#AppName} now"; Flags: nowait postinstall skipifsilent
+Filename: "{app}\ui\agent-ui.exe"; Description: "Start {#AppName} now"; Flags: nowait postinstall skipifsilent
 
 [UninstallRun]
 ; stop a running daemon so its files can be removed (data under %APPDATA%\personal-agent is kept on purpose)

@@ -1,4 +1,7 @@
-"""A tiny window for scripts/screen_check.py to operate on (separate process: UI Automation must not query its own thread)."""
+"""A tiny window for scripts/screen_check.py to operate on (separate process: UI Automation must not query its own thread).
+
+Needs PySide6, which the project itself no longer uses: run the check with
+    python -m uv run --with PySide6 python scripts/screen_check.py"""
 
 import sys
 

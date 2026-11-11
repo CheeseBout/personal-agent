@@ -4,7 +4,7 @@ A single-user, Windows-first agent: a local **daemon** runs the agent, a separat
 
 ```mermaid
 flowchart LR
-  subgraph UI["agent-ui (PySide6)"]
+  subgraph UI["agent-ui (Electron)"]
     tray[Tray, hotkeys]
     chat[Chat, plan panel, approvals]
     mgr[Manager, settings, wizard]
@@ -48,8 +48,10 @@ flowchart LR
 ## Processes
 - **`agent-core`** hosts the graph, tools, memory, RAG, policy, scheduler, screen watcher and observability. It binds to `127.0.0.1` only and refuses anything else.
   Every WebSocket / `POST /kill` request needs the per-install token; foreign `Origin` headers are rejected; `GET /health` returns only `{"status":"ok"}`.
-- **`agent-ui`** talks to the daemon only through the WebSocket (QtWebSockets, auto-reconnect). Closing or crashing it never stops a task; on reconnect the daemon re-sends pending approvals.
-  The UI holds no agent state (`ui/model.py` is a view of the event stream).
+- **`agent-ui`** (Electron, `electron-ui/`) talks to the daemon only through one WebSocket held by its main process (auto-reconnect). Closing or crashing it never stops a task; on reconnect the daemon re-sends pending approvals.
+  The UI holds no agent state (`src/shared/session.ts` is a view of the event stream, run identically in the main process and in each window).
+  Every window is sandboxed with a strict content-security policy and no Node access; the token never leaves the main process; model output is rendered as markdown without raw HTML;
+  only the approval window may answer an approval; only the hidden voice window gets the microphone. Avatar, bubble, radial menu and screen overlays are separate small windows created on first use.
 - **Docker sandbox** (optional, lazy): see below. **`agent-chat`** is a terminal client with the same protocol.
 
 ## One turn
@@ -112,5 +114,6 @@ One SQLite file per store plus yaml. A damaged config or database is renamed `*.
 (the shipped copy may be read-only). Messages are capped (32 MB frame, 4 attachments, 15 MB) and turns are queued (≤ 8).
 
 ## Footprint (measured, idle, Windows 11)
-Daemon ~106 MB, ~183 MB after the first chat (provider SDKs load on demand), start-up ~4 s; UI ~100 MB offscreen / ~170 MB on a real desktop; CPU ~0 % with no polling (the scheduler sleeps to the next job, the screen watcher exists only while on).
-The original targets (daemon ≤ 100, UI ≤ 60, combined < 150 MB, start ≤ 3 s) were not reachable with PySide6 + LangGraph; see [decisions.md](decisions.md). Measure with `scripts/profile_resources.py`.
+Daemon ~106 MB, ~183 MB after the first chat (provider SDKs load on demand), start-up ~4 s; daemon CPU ~0 % with no polling (the scheduler sleeps to the next job, the screen watcher exists only while on).
+Desktop UI (Electron, packaged, idle with the chat, approval and avatar windows): ~186 MB private memory in 6 processes, ~2 % of one core while the avatar animates. Each further companion window (bubble, radial menu, overlays, voice) is one more process, created on first use.
+The original targets (daemon ≤ 100, UI ≤ 60, combined < 150 MB, start ≤ 3 s) are not reachable with Electron + LangGraph; see [decisions.md](decisions.md). Measure the daemon with `scripts/profile_resources.py`; the UI shows its own numbers under Settings → About.

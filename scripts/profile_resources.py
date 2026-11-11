@@ -1,8 +1,9 @@
-"""Measures what the agent costs when idle: daemon cold start, daemon + UI memory/CPU, and the heaviest imports.
+"""Measures what the daemon costs when idle: cold start, memory / CPU, and the heaviest imports.
 
-Run from the repo root:  python -m uv run python scripts/profile_resources.py [--no-ui]
-Uses a throw-away data dir and an unused port; nothing of yours is touched. The UI is measured offscreen (no real window).
-Targets (docs/decisions.md): daemon idle <= 110 MB (<= 200 MB after the first chat), UI <= 110 MB offscreen, idle CPU ~0%, daemon start <= 5 s.
+Run from the repo root:  python -m uv run python scripts/profile_resources.py
+Uses a throw-away data dir and an unused port; nothing of yours is touched.
+Targets (docs/decisions.md): daemon idle <= 110 MB (<= 200 MB after the first chat), idle CPU ~0%, daemon start <= 5 s.
+The desktop UI is an Electron app (electron-ui/): its own numbers are on its Settings -> About page.
 """
 
 import argparse
@@ -53,7 +54,6 @@ def importtime(module: str, top: int = 25) -> list[tuple[float, str]]:
 
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--no-ui", action="store_true")
     ap.add_argument("--json", action="store_true")
     a = ap.parse_args()
     port = free_port()
@@ -68,7 +68,7 @@ def main() -> None:
     with open(os.path.join(home, "config.yaml"), "w", encoding="utf-8") as f:
         f.write(f"server:\n  port: {port}\n")
     env = {**os.environ, "PERSONAL_AGENT_HOME": home, "PERSONAL_AGENT_CONFIG_DIR": cfgdir, "PERSONAL_AGENT_TOKEN": "prof",
-           "PERSONAL_AGENT_ENV_FILE": "nul", "QT_QPA_PLATFORM": "offscreen"}
+           "PERSONAL_AGENT_ENV_FILE": "nul"}
     res: dict[str, object] = {}
     t0 = time.perf_counter()
     d = subprocess.Popen([sys.executable, "-m", "personal_agent.core.main"], env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -88,22 +88,8 @@ def main() -> None:
     res["daemon_idle_rss_mb"] = round(rp.memory_info().rss / 1_048_576)
     res["daemon_idle_cpu_pct"] = rp.cpu_percent(None)
     res["daemon_threads"] = rp.num_threads()
-    ui = None
-    if not a.no_ui:
-        ui = subprocess.Popen([sys.executable, "-m", "personal_agent.ui", "--no-daemon"], env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        time.sleep(9)
-        up = real_proc(ui.pid)
-        up.cpu_percent(None)
-        time.sleep(5)
-        res["ui_idle_rss_mb"] = round(up.memory_info().rss / 1_048_576)
-        res["ui_idle_cpu_pct"] = up.cpu_percent(None)
-        res["ui_threads"] = up.num_threads()
-    for p in (ui, d):
-        if p:
-            p.terminate()
+    d.terminate()
     res["daemon_top_imports_ms"] = [(round(ms), m) for ms, m in importtime("personal_agent.core.app")]
-    if not a.no_ui:
-        res["ui_top_imports_ms"] = [(round(ms), m) for ms, m in importtime("personal_agent.ui.app")]
     if a.json:
         print(json.dumps(res, indent=2))
         return

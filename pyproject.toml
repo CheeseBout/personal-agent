@@ -1,7 +1,7 @@
 [project]
 name = "personal-agent"
 version = "0.0.1"
-description = "Self-hosted single-user agentic AI (LangGraph) with a desktop companion, Windows-first."
+description = "Self-hosted single-user agentic AI (LangGraph), Windows-first. The desktop companion is the Electron app in electron-ui/."
 requires-python = ">=3.12,<3.15"
 dependencies = [
   "langgraph==1.2.19",
@@ -28,6 +28,7 @@ dependencies = [
   "icalendar==7.3.0",
   "recurring-ical-events==3.8.2",
   "watchdog==7.0.0",
+  "psutil==7.2.2",  # CPU / memory of the daemon for the UI's About page
 ]
 
 [project.optional-dependencies]
@@ -37,9 +38,8 @@ observability = ["langfuse==5.1.0"]
 local-embeddings = ["fastembed==0.9.1"]
 browser = ["playwright==1.64.1"]
 screen = ["mss==10.2.0", "pywinauto==0.6.9", "pillow==13.0.0", "imagehash==4.3.2"]
-voice = ["edge-tts==7.3.1"]  # spoken answers (free, needs internet). Speech recognition defaults to Gemini audio (cloud).
+voice = ["edge-tts==7.3.1"]  # spoken answers, synthesised by the daemon (free, needs internet). Speech recognition defaults to Gemini audio (cloud).
 voice-local = ["faster-whisper==1.2.1"]  # optional offline speech recognition (large download)
-ui = ["PySide6==6.12.0", "psutil==7.2.2"]
 
 [dependency-groups]
 build = ["pyinstaller==6.22.3"]  # `uv sync --group build` to package (scripts/build.ps1)
@@ -49,7 +49,6 @@ dev = ["ruff==0.17.3", "mypy==2.4.1", "pytest==9.2.0", "pytest-asyncio==1.4.1", 
 agent-core = "personal_agent.core.main:main"
 agent-chat = "personal_agent.cli:main"
 agent-eval = "personal_agent.evals:main"
-agent-ui = "personal_agent.ui.app:main"
 
 [build-system]
 requires = ["hatchling"]
@@ -87,4 +86,3 @@ addopts = "-m 'not live and not docker and not desktop'"
 # These validators raise ValueError for every kind of bad input on purpose: the WebSocket layer maps it to one `bad_request`.
 "src/personal_agent/core/admin.py" = ["TRY004"]
 "src/personal_agent/core/attachments.py" = ["TRY004"]
-"src/personal_agent/ui/decisions.py" = ["TRY004"]

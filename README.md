@@ -1,6 +1,6 @@
 # personal-agent
 
-A self-hosted, single-user agentic assistant for Windows: LangGraph agent with tools, memory, document search, parallel sub-agents, a safety gate with human approvals, a Docker sandbox, a desktop companion (tray, chat, avatar, voice)
+A self-hosted, single-user agentic assistant for Windows: LangGraph agent with tools, memory, document search, parallel sub-agents, a safety gate with human approvals, a Docker sandbox, a desktop companion (Electron: tray, chat, avatar, voice)
 and screen perception/control. Vietnamese and English; cloud LLMs by default (Claude Haiku, Gemini flash-lite), local embeddings.
 
 ## What it does
@@ -16,7 +16,7 @@ python -m pip install --user uv
 .\scripts\run.ps1 -Chat      # terminal chat instead
 ```
 Add a key in the wizard or copy `.env.example` to `.env` (`ANTHROPIC_API_KEY`, `GOOGLE_API_KEY`, ...). Optional: Ollama (`ollama pull bge-m3`) for document search, Docker Desktop for sandboxed code, Langfuse keys for tracing.
-Requirements: Windows 10/11, Python 3.12+.
+Requirements: Windows 10/11, Python 3.12+, and Node.js 20+ for the desktop UI (not needed for the daemon or the terminal chat).
 
 ## Documentation
 | | |
@@ -30,7 +30,8 @@ Requirements: Windows 10/11, Python 3.12+.
 
 ## Development
 ```powershell
-python -m uv sync --group dev --extra mcp --extra ui --extra voice --extra screen --extra observability
+python -m uv sync --group dev --extra mcp --extra voice --extra screen --extra observability
 python -m uv run pytest && python -m uv run ruff check . && python -m uv run mypy src
+cd electron-ui; npm install; npm run typecheck; npm test; npm run e2e      # the desktop UI
 ```
-Entry points: `agent-core` (daemon), `agent-ui` (desktop), `agent-chat` (terminal), `agent-eval` (scenario evals). Build a Windows bundle with `.\scripts\build.ps1`.
+Entry points: `agent-core` (daemon), `agent-chat` (terminal), `agent-eval` (scenario evals); the desktop UI is the Electron app in `electron-ui/` (`npm run dev`). Build a Windows bundle with `.\scripts\build.ps1`.

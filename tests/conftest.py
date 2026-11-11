@@ -1,8 +1,6 @@
-import os
 import shutil
 from pathlib import Path
 
-os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")  # UI tests never open real windows
 import pytest
 import yaml
 
