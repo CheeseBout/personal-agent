@@ -34,7 +34,7 @@ dependencies = [
 [project.optional-dependencies]
 # Heavy / later-phase deps stay optional so the idle daemon stays small.
 mcp = ["langchain-mcp-adapters==0.3.2"]
-observability = ["langfuse==5.1.0"]
+observability = ["langfuse==5.2.0"]
 local-embeddings = ["fastembed==0.9.1"]
 browser = ["playwright==1.64.1"]
 screen = ["mss==10.2.0", "pywinauto==0.6.9", "pillow==13.0.0", "imagehash==4.3.2"]
