@@ -129,7 +129,7 @@ class SttCfg(BaseModel):
 
 
 class TtsCfg(BaseModel):
-    enabled: bool = False  # speak answers aloud (edge-tts, runs in the UI process)
+    enabled: bool = False  # speak answers aloud (edge-tts in the daemon; the UI only plays the clips)
     voice_vi: str = "vi-VN-HoaiMyNeural"
     voice_en: str = "en-US-AriaNeural"
     rate: str = "+0%"

@@ -137,3 +137,51 @@ def test_watching_stops_by_itself_when_the_last_ui_disconnects(tmp_path: Path) -
             while ev["type"] != "screen_mode":
                 ev = ws2.receive_json()
             assert ev["state"] == "off"
+
+
+def test_the_ui_asks_the_daemon_for_a_masked_screenshot_and_gets_a_chat_attachment(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    with Rig(tmp_path) as r:
+        r.ws.send_json({"type": "capture", "kind": "region", "rect": [0, 0, 64, 64]})
+        ev = r.until("captured")
+        att = ev["attachment"]
+        assert ev["title"] == "Notes" and att["mime"] == "image/png" and att["name"].startswith("screen-")
+        assert __import__("base64").b64decode(att["data"]).startswith(b"\x89PNG")
+
+        def refuse(*a: Any, **k: Any) -> Any:
+            raise capture.Blocked("refused: private window")
+
+        monkeypatch.setattr(capture, "capture", refuse)
+        r.ws.send_json({"type": "capture", "kind": "active_window"})
+        err = r.until("error")
+        assert err["code"] == "bad_request" and "private window" in err["message"]
+
+
+def test_spoken_answers_arrive_sentence_by_sentence_and_a_failure_is_reported(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from personal_agent.voice import tts
+
+    said: list[tuple[str, str]] = []
+
+    async def fake(sentence: str, voice: str, rate: str) -> bytes:
+        said.append((sentence, voice))
+        return b"mp3:" + sentence.encode()
+
+    monkeypatch.setattr(tts, "synth", fake)
+    with Rig(tmp_path) as r:
+        r.ws.send_json({"type": "tts", "id": 7, "text": "**Hello** there. How are you?"})
+        a, b = r.until("tts_audio"), r.until("tts_audio")
+        assert (a["seq"], b["seq"], a["id"]) == (0, 1, 7) and __import__("base64").b64decode(a["data"]) == b"mp3:Hello there."
+        assert r.until("tts_done")["id"] == 7 and said[0][1] == "en-US-AriaNeural"
+
+        async def boom(*a: Any) -> bytes:
+            raise OSError("offline")
+
+        monkeypatch.setattr(tts, "synth", boom)
+        r.ws.send_json({"type": "tts", "id": 8, "text": "Xin chào bạn."})
+        assert r.until("error")["code"] == "tts" and r.until("tts_done")["id"] == 8
+
+
+def test_about_tells_the_ui_where_the_data_and_config_folders_are(tmp_path: Path) -> None:
+    with Rig(tmp_path) as r:
+        r.ws.send_json({"type": "about"})
+        ev = r.until("about")
+        assert Path(ev["data_dir"]).is_dir() and Path(ev["config_dir"]).is_dir() and ev["stats"]["rss_mb"] > 10 and ev["clients"] == 1

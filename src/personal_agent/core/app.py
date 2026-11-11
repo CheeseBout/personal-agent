@@ -9,6 +9,7 @@ import contextlib
 import os
 import re
 import secrets
+import time
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -44,7 +45,7 @@ from personal_agent.observability.logging import redact, redact_obj
 from personal_agent.observability.metrics import Metrics
 from personal_agent.observability.tracing import Tracing
 from personal_agent.observability.usage import Meter
-from personal_agent.perception import hooks, windows
+from personal_agent.perception import capture, hooks, windows
 from personal_agent.perception.watch import ScreenWatcher
 from personal_agent.policy.approvals import ApprovalStore
 from personal_agent.policy.killswitch import KillSwitch
@@ -52,18 +53,19 @@ from personal_agent.rag.embed import EmbeddingUnavailable
 from personal_agent.rag.loaders import UnsupportedDocument
 from personal_agent.rag.watch import FolderWatcher
 from personal_agent.settings.secrets import get_api_token
-from personal_agent.settings.settings import data_dir, load_settings, set_agent_name
+from personal_agent.settings.settings import config_dir, data_dir, load_settings, set_agent_name
 from personal_agent.storage import ensure_db_ok
 from personal_agent.tools import procs
 from personal_agent.tools.files import workspace
 from personal_agent.tools.registry import policy
-from personal_agent.voice import stt
+from personal_agent.voice import stt, tts
 
 log = structlog.get_logger()
 _THREAD_ID = re.compile(r"^[\w\-]{1,64}$")
 _LOCAL_ORIGIN = re.compile(r"^https?://(127\.0\.0\.1|localhost|\[::1\])(:\d{1,5})?$")
 MAX_TEXT = 100_000
 MAX_QUEUED_TURNS = 8
+MAX_SHOT_BYTES = 5_000_000  # same cap as any other chat attachment
 Send = Callable[[dict[str, Any]], Awaitable[None]]
 
 
@@ -344,7 +346,7 @@ def create_app(brain: Brain | None = None, db_path: Path | None = None, token: s
             return {"type": "schedules", "items": services.scheduler().jobs()}
         return {"type": "schedule_cancel", "ok": services.scheduler().cancel(int(msg["id"]))}
 
-    ADMIN = {"settings_get", "settings_set", "secret_set", "test_role", "policy_get", "policy_set", "policy_add_path", "transcribe", "about", "screen_mode"}
+    ADMIN = {"settings_get", "settings_set", "secret_set", "test_role", "policy_get", "policy_set", "policy_add_path", "transcribe", "about", "screen_mode", "capture"}
 
     def stt_text(audio: bytes, mime: str) -> str:
         """Transcribe audio (blocking; call from a thread). The daily cap is checked first, cloud usage is metered."""
@@ -357,6 +359,45 @@ def create_app(brain: Brain | None = None, db_path: Path | None = None, token: s
         if tin or tout:
             app.state.meter.record(settings.voice.stt.model, tin, tout)
         return text
+
+    def shot(kind: str, rect: Any) -> dict[str, Any]:
+        """A screenshot the user asked for, privacy-masked, packaged as a chat attachment (blocking; call from a thread)."""
+        box = tuple(int(v) for v in rect) if isinstance(rect, list) and len(rect) == 4 else None
+        try:
+            got = capture.capture(kind, settings.screen, rect=box)  # type: ignore[arg-type]
+        except capture.CaptureError as e:  # includes Blocked: the message is safe to show
+            raise ValueError(str(e)) from e
+        img = capture.downscale(got.image, 2200)
+        data, ext, mime = capture.to_png(img), "png", "image/png"
+        if len(data) > MAX_SHOT_BYTES:  # busy screens compress badly as PNG
+            data, ext, mime = capture.to_jpeg(img, 2200, 85), "jpg", "image/jpeg"
+        return {"type": "captured", "masked": got.masked, "title": got.title,
+                "attachment": {"name": f"screen-{time.strftime('%H%M%S')}.{ext}", "mime": mime, "data": base64.b64encode(data).decode("ascii")}}
+
+    async def speak(msg: dict[str, Any], send: Send) -> None:
+        """Synthesise an answer sentence by sentence; a newer `tts` / `tts_stop` (or the kill switch) ends this one early."""
+        s, sid, cfg = app.state, msg.get("id"), settings.voice.tts
+        s.tts_gen = gen = getattr(s, "tts_gen", 0) + 1
+        try:
+            sentences, voice = tts.plan(str(msg.get("text", "")), cfg)
+            for i, sentence in enumerate(sentences):
+                audio = await tts.synth(sentence, voice, cfg.rate)
+                if s.tts_gen != gen or s.kill.engaged:
+                    return
+                await send({"type": "tts_audio", "id": sid, "seq": i, "mime": "audio/mpeg", "data": base64.b64encode(audio).decode("ascii")})
+        except Exception as e:  # noqa: BLE001 - offline / voice missing / extra not installed: report, never crash the daemon
+            await send({"type": "error", "code": "tts", "message": f"{type(e).__name__}: {str(e)[:120]}"})
+        finally:
+            await send({"type": "tts_done", "id": sid})
+
+    def stats() -> dict[str, float] | None:
+        try:
+            import psutil
+
+            p = psutil.Process()
+            return {"cpu": p.cpu_percent(None), "rss_mb": round(p.memory_info().rss / 1_048_576, 1)}
+        except Exception:  # noqa: BLE001 - access denied or a broken install: the About page shows "n/a"
+            return None
 
     async def admin(kind: str, msg: dict[str, Any]) -> dict[str, Any] | None:
         """Settings / secrets / policy / voice calls behind the Settings, Policy and chat-microphone UI."""
@@ -385,6 +426,8 @@ def create_app(brain: Brain | None = None, db_path: Path | None = None, token: s
         if kind == "transcribe":
             audio = base64.b64decode(str(msg.get("data", "")), validate=True)
             return {"type": "transcript", "text": await asyncio.to_thread(stt_text, audio, str(msg.get("mime", "audio/wav")))}
+        if kind == "capture":
+            return await asyncio.to_thread(shot, str(msg.get("kind", "screen")), msg.get("rect"))
         if kind == "screen_mode":
             act = str(msg.get("action", "status"))
             if act not in ("on", "off", "pause", "resume", "status"):
@@ -399,7 +442,8 @@ def create_app(brain: Brain | None = None, db_path: Path | None = None, token: s
             return status
         if isinstance(msg.get("ui_pid"), int):
             windows.register_own_pid(msg["ui_pid"])  # the agent may never operate the UI's windows (it could approve itself)
-        return {"type": "about", "pid": os.getpid(), "killed": app.state.kill.engaged}
+        return {"type": "about", "pid": os.getpid(), "killed": app.state.kill.engaged, "stats": stats(), "clients": len(app.state.clients),
+                "data_dir": str(data_dir()), "config_dir": str(config_dir())}  # where the UI finds skins and keeps ui_state.json
 
     async def handle(msg: Any, send: Send) -> None:
         s = app.state
@@ -412,6 +456,10 @@ def create_app(brain: Brain | None = None, db_path: Path | None = None, token: s
                 return await send({"type": "error", "code": "bad_request", "message": str(e)[:200]})
         if kind == "kill":
             await send({"type": "killed", "threads": await do_kill()})
+        elif kind == "tts":
+            s.tts_task = asyncio.create_task(speak(msg, send))  # not in s.tasks: speaking must not make the daemon look busy
+        elif kind == "tts_stop":
+            s.tts_gen = getattr(s, "tts_gen", 0) + 1
         elif kind == "release_kill":
             s.kill.release()
             await send({"type": "kill_released"})
