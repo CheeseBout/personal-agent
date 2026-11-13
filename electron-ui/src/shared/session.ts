@@ -1,12 +1,16 @@
 /** UI-side view of one conversation, built from the daemon's event stream. Pure: the main process and every window run the same reducer. */
 
 export type Ev = { type?: string; [k: string]: any };
-export type Entry = { kind: "user" | "agent" | "event" | "error"; text: string; meta: Record<string, any> };
+export type Entry = { kind: "user" | "agent" | "event" | "error" | "note"; text: string; meta: Record<string, any>; id?: number };
 export type Step = { text: string; role: string; status: "todo" | "done" | "failed" | "blocked" };
 export type Approval = { call_id: string; tool: string; args: Record<string, any>; tainted: boolean; [k: string]: any };
 export type Change = "transcript" | "plan" | "approvals" | "busy" | "usage" | "name" | "killed";
 
 const STEP = /^s(\d+)$/;
+/** Events that belong to one conversation: a session ignores them when they name another thread. */
+const THREAD_SCOPED = new Set(["intent", "plan", "worker", "tool_call", "tool_result", "verdict", "token", "final", "error", "paused", "compacted", "thread_history", "_user"]);
+/** Events that concern every conversation (a pending approval, the budget, the kill switch): the main process hands them to all sessions. */
+export const GLOBAL_EVENTS = new Set(["approvals", "approval_request", "_decided", "usage", "agent_name", "killed", "kill_released"]);
 
 /** Approval records arrive with args as a JSON string (DB row) or an object (live request): always return an object. */
 export function normalizeApproval(a: Record<string, any>): Approval {
@@ -33,14 +37,17 @@ export class Session {
   used: Record<string, any> = {};
   usage: Record<string, any> = {};
   killed = false;
+  historyLoaded = false; // the saved messages of this conversation were fetched from the daemon
+  hasMore = false; // older saved messages exist
+  firstId: number | null = null; // id of the oldest saved message loaded so far
   private live: Entry | null = null; // the answer being streamed token by token
 
   constructor(public threadId = "default", public agentName = "personal-agent") {}
 
   /** A copy of everything a window needs to start from (sent once; events keep it current afterwards). */
   snapshot(): Record<string, any> {
-    const { transcript, plan, steps, verdict, intent, approvals, busy, used, usage, killed, threadId, agentName } = this;
-    return structuredClone({ transcript, plan, steps, verdict, intent, approvals, busy, used, usage, killed, threadId, agentName,
+    const { transcript, plan, steps, verdict, intent, approvals, busy, used, usage, killed, threadId, agentName, historyLoaded, hasMore, firstId } = this;
+    return structuredClone({ transcript, plan, steps, verdict, intent, approvals, busy, used, usage, killed, threadId, agentName, historyLoaded, hasMore, firstId,
       live: this.live ? transcript.indexOf(this.live) : -1 });
   }
 
@@ -71,7 +78,24 @@ export class Session {
   apply(ev: Ev): Set<Change> {
     const ch = new Set<Change>();
     const add = (...c: Change[]): void => c.forEach((x) => ch.add(x));
+    if (THREAD_SCOPED.has(ev.type ?? "") && ev.thread_id && ev.thread_id !== this.threadId) return ch;
     switch (ev.type) {
+      case "thread_history": { // the saved messages of this conversation (the newest page first, then older ones on request)
+        const rows: Entry[] = (ev.entries ?? []).map((e: any) => ({ kind: e.kind, text: String(e.text ?? ""), meta: e.meta ?? {}, id: e.id }));
+        if (ev.before == null) {
+          if (this.historyLoaded) break; // a reconnect must not duplicate what is already on screen
+          this.transcript = [...rows, ...this.transcript];
+          this.historyLoaded = true;
+        } else this.transcript = [...rows.filter((r) => this.firstId === null || (r.id ?? 0) < this.firstId), ...this.transcript];
+        this.hasMore = Boolean(ev.more);
+        this.firstId = this.transcript.find((e) => e.id !== undefined)?.id ?? this.firstId;
+        add("transcript");
+        break;
+      }
+      case "compacted":
+        this.say("note", "");
+        add("transcript");
+        break;
       case "_user": // the user sent a message
         this.say("user", String(ev.text ?? ""), { attachments: ev.attachments ?? [] });
         Object.assign(this, { busy: true, plan: null, steps: [], verdict: "", intent: null, live: null });

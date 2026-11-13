@@ -56,6 +56,25 @@ export const promptText = (title: string, label: string, initial: string): Promi
   <Frame title={title} onCancel={() => close(null)}><TextForm label={label} initial={initial} close={close} /></Frame>
 ));
 
+function LineForm({ label, initial, close }: { label: string; initial: string; close: (r: string | null) => void }): React.JSX.Element {
+  const [text, setText] = useState(initial);
+  return (
+    <form onSubmit={(e) => { e.preventDefault(); close(text); }} style={{ display: "contents" }}>
+      <label>{label}</label>
+      <input type="text" autoFocus value={text} onChange={(e) => setText(e.target.value)} />
+      <div className="buttons">
+        <button type="submit" className="primary">OK</button>
+        <button type="button" onClick={() => close(null)}>{tr("Cancel", "Hủy")}</button>
+      </div>
+    </form>
+  );
+}
+
+/** One line of text; null when cancelled. */
+export const promptLine = (title: string, label: string, initial: string): Promise<string | null> => show<string | null>((close) => (
+  <Frame title={title} onCancel={() => close(null)}><LineForm label={label} initial={initial} close={close} /></Frame>
+));
+
 /** Any form: `body` gets `close(result)`; Escape closes with null. */
 export const formBox = <T,>(title: string, body: (close: (r: T | null) => void) => React.JSX.Element): Promise<T | null> =>
   show<T | null>((close) => <Frame title={title} onCancel={() => close(null)}>{body(close)}</Frame>);

@@ -25,6 +25,15 @@ const PATHS: Record<string, string> = {
   area: "M4 8V4h4M16 4h4v4M20 16v4h-4M8 20H4v-4",
   mute: "M4 9h4l5-4v14l-5-4H4zM17 9l4 6M21 9l-4 6",
   resume: "M7 4l13 8-13 8z",
+  plus: "M12 5v14M5 12h14",
+  search: "M11 4a7 7 0 1 0 0 14 7 7 0 0 0 0-14zM20 20l-4-4",
+  pin: "M9 4h6l-1 6 3 3H7l3-3zM12 13v7",
+  trash: "M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13M10 11v6M14 11v6",
+  download: "M12 4v11M7 11l5 5 5-5M5 20h14",
+  copy: "M8 8h11v12H8zM5 16V4h11",
+  edit: "M4 20h4L19 9l-4-4L4 16zM13 7l4 4",
+  retry: "M4 12a8 8 0 1 0 3-6.2M4 4v5h5",
+  down: "M12 5v14M6 13l6 6 6-6",
   hide: "M3 3l18 18M10.6 6.2A10 10 0 0 1 12 6c6 0 10 6 10 6a17 17 0 0 1-3 3.6M6.1 7.3A17 17 0 0 0 2 12s4 7 10 7a9.7 9.7 0 0 0 4-.9",
 };
 

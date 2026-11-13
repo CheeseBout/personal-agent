@@ -170,3 +170,18 @@ def test_decisions_must_match_calls_that_are_actually_waiting(env: Path, tmp_pat
         assert until(ws)[-1]["type"] == "final"
         ws.send_json({"type": "approve", "thread_id": "th", "decisions": {"w1": {"action": "approve"}}})  # replay
         assert until(ws)[-1]["code"] == "bad_request"
+
+
+def test_a_conversation_waiting_for_approval_cannot_be_deleted_and_the_request_is_in_its_history(env: Path, tmp_path: Path) -> None:
+    with app_client(tmp_path, WRITE, answer("done")) as c:
+        ws = connect(c)
+        ws.send_json({"text": "write it", "thread_id": "th"})
+        ev = until(ws)
+        assert ev[-1]["type"] == "paused" and ev[-1]["thread_id"] == "th"
+        ws.send_json({"type": "thread_delete", "thread_id": "th", "rid": 1})
+        assert until(ws, {"error", "thread_deleted"})[-1]["code"] == "bad_request"
+        ws.send_json({"type": "thread_history", "thread_id": "th", "rid": 2})
+        hist = until(ws, {"thread_history"})[-1]
+        assert any(e["text"].startswith("approval requested: file_write") for e in hist["entries"])
+        ws.send_json({"type": "thread_search", "query": "", "has": "approval", "rid": 3})
+        assert until(ws, {"thread_results"})[-1]["items"][0]["thread_id"] == "th"

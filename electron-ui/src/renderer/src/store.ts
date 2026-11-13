@@ -11,12 +11,14 @@ declare global {
   }
 }
 
+export type Thread = { id: string; title: string; updated: number; pinned: boolean; count: number; running: boolean; pending: boolean };
 export type Ui = { connected: boolean; dark: boolean; highlight: string; lang: string; railCollapsed: boolean; page: string; hotkeyProblems: Record<string, string>; recording: boolean; speaking: boolean };
 
 class Store {
   session = new Session();
   ui: Ui = { connected: false, dark: false, highlight: DEFAULT_HIGHLIGHT, lang: "en", railCollapsed: false, page: "chat", hotkeyProblems: {}, recording: false, speaking: false };
   settings: Ev | null = null;
+  threads: Thread[] = []; // the conversation list, newest first, pinned on top
   version = 0;
   private listeners = new Set<() => void>();
   private eventListeners = new Set<(ev: Ev) => void>();
@@ -53,6 +55,8 @@ class Store {
       this.setUi(ui);
     } else if (ev.type === "_page") this.setUi({ page: ev.page });
     else if (ev.type === "settings") this.settings = ev;
+    else if (ev.type === "threads") this.threads = ev.items ?? [];
+    else if (ev.type === "_thread") this.session = Session.from(ev.snapshot); // the user switched conversation
     this.session.apply(ev);
     for (const l of this.eventListeners) l(ev);
     this.bump();

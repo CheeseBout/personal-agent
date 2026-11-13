@@ -1,11 +1,12 @@
 /** `agent-ui`: tray + chat + approval center, all talking to the daemon over one WebSocket held here in the main process.
  * The UI holds no agent state: closing it never stops a running task, and on reconnect the daemon re-sends pending approvals. */
+import { randomBytes } from "node:crypto";
 import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { app, BrowserWindow, dialog, ipcMain, type IpcMainInvokeEvent, Menu, nativeTheme, Notification, Tray } from "electron";
 import { AvatarState } from "../shared/avatarState";
 import { setLanguage, tr } from "../shared/i18n";
-import { type Ev, Session } from "../shared/session";
+import { type Ev, GLOBAL_EVENTS, Session } from "../shared/session";
 import { hasProviderKey } from "../shared/settings";
 import { DEFAULT_HIGHLIGHT } from "../shared/theme";
 import type { Attachment } from "../shared/attach";
@@ -18,7 +19,8 @@ const THREAD = "default";
 // What a window may send straight to the daemon. Turns and approvals have their own checked channels below.
 const FORBIDDEN_FROM_WINDOWS = new Set(["user", "approve", "about"]);
 
-const session = new Session(THREAD);
+let session = new Session(THREAD); // the conversation on screen; the others wait in `sessions` and keep following the daemon's events
+const sessions = new Map<string, Session>([[THREAD, session]]);
 const avatar = new AvatarState();
 let client: DaemonClient | null = null;
 let mainWin: BrowserWindow | null = null;
@@ -30,6 +32,7 @@ let railCollapsed = false;
 let page = "chat";
 let quitting = false;
 let settingsSeen = false;
+let staleNotified = false;
 // Start with only the avatar (and the tray): the chat opens from the avatar, the tray or a hotkey. Set by scripts/run.ps1.
 const background = process.env.PERSONAL_AGENT_BACKGROUND === "1" || process.argv.includes("--background");
 let seq = 0; // every broadcast is numbered, so a window that starts from a snapshot knows which events it already contains
@@ -106,8 +109,14 @@ function notify(body: string): void {
 function onEvent(ev: Ev): void {
   // A speech failure is about the loudspeaker, not about the task: it must not end up in the transcript or stop the "busy" state.
   if (ev.type === "error" && ev.code === "tts") return companion.onEvent({ ...ev, type: "tts_error" }, [], false);
+  if (ev.type === "error" && ev.message === "unknown message type") { // a daemon older than this UI does not know the conversation requests: say so once, not in the chat
+    if (!staleNotified) notify(tr("The agent is older than this window: restart it to get conversations.", "Agent cũ hơn cửa sổ này: hãy khởi động lại agent để dùng các cuộc trò chuyện."));
+    staleNotified = true;
+    return;
+  }
   const before = new Set(Object.keys(session.approvals));
   const changed = session.apply(ev);
+  for (const other of sessions.values()) if (other !== session && (ev.thread_id || GLOBAL_EVENTS.has(ev.type ?? ""))) other.apply(ev); // a background conversation keeps following the daemon
   avatar.pendingApprovals = Object.keys(session.approvals).length;
   avatar.onEvent(ev);
   if (!NOT_FOR_WINDOWS.has(ev.type ?? "")) broadcast(ev);
@@ -134,6 +143,27 @@ function onEvent(ev: Ev): void {
       break;
     case "final":
       client?.send({ type: "usage" }); // keep the budget meters current after every answer
+      refreshThreads();
+      break;
+    case "intent":
+    case "paused":
+    case "error":
+      refreshThreads(); // a new conversation gets its title from its first message; the running / waiting marks change
+      break;
+    case "threads":
+      onThreads(ev);
+      break;
+    case "thread_renamed":
+    case "thread_pinned":
+      refreshThreads();
+      break;
+    case "thread_deleted":
+      sessions.delete(String(ev.thread_id));
+      if (ev.thread_id === session.threadId) newThread();
+      refreshThreads();
+      break;
+    case "thread_export":
+      void saveExport(String(ev.thread_id), String(ev.markdown ?? ""));
       break;
     case "schedule_run":
       notify(String(ev.status ?? ""));
@@ -226,7 +256,7 @@ function stats(): Record<string, unknown> {
     daemon: client?.connected ? (about?.stats ?? null) : null };
 }
 
-const companion: Companion = new Companion({ session, state: avatar, settings: () => settings, about: () => about,
+const companion: Companion = new Companion({ get session() { return session; }, state: avatar, settings: () => settings, about: () => about,
   send: (msg) => client?.send(msg) ?? false, showMain, showApprovals, kill, quit, sendUser,
   changed: () => {
     buildTray();
@@ -237,8 +267,60 @@ const companion: Companion = new Companion({ session, state: avatar, settings: (
 
 // ---- user actions ----------------------------------------------------------------------------------------------------------
 function local(ev: Ev): void {
+  ev = { thread_id: session.threadId, ...ev };
   session.apply(ev);
+  for (const other of sessions.values()) if (other !== session && GLOBAL_EVENTS.has(ev.type ?? "")) other.apply(ev);
   broadcast(ev);
+}
+
+// ---- conversations ---------------------------------------------------------------------------------------------------------
+let refreshTimer: NodeJS.Timeout | null = null;
+/** Ask for the conversation list (soon, and once for a burst of events). */
+function refreshThreads(): void {
+  refreshTimer ??= setTimeout(() => {
+    refreshTimer = null;
+    client?.send({ type: "threads_list" });
+  }, 150);
+}
+
+/** The saved messages of a conversation, once (a reconnect must not load them again). */
+function loadHistory(s: Session): void {
+  if (!s.historyLoaded) client?.send({ type: "thread_history", thread_id: s.threadId, limit: 200 });
+}
+
+let resumed = false;
+/** The first time the list arrives and nothing was said yet, pick up where the user left off. */
+function onThreads(ev: Ev): void {
+  if (resumed) return;
+  resumed = true;
+  const latest = (ev.items as { id: string }[] | undefined)?.[0];
+  if (latest && latest.id !== session.threadId && !session.transcript.length && !session.busy && session.threadId === THREAD) switchThread(latest.id);
+}
+
+function switchThread(id: string, fresh = false): void {
+  let next = sessions.get(id);
+  if (!next) {
+    next = new Session(id, session.agentName);
+    next.historyLoaded = fresh; // a brand-new conversation has nothing saved yet
+    sessions.set(id, next);
+  }
+  for (const k of ["approvals", "usage", "killed"] as const) (next as any)[k] = (session as any)[k]; // concerns every conversation
+  session = next;
+  loadHistory(next);
+  broadcast({ type: "_thread", snapshot: next.snapshot() });
+  showMain("chat");
+  refreshThreads();
+}
+
+function newThread(): void {
+  switchThread("c-" + randomBytes(4).toString("hex"), true);
+}
+
+async function saveExport(threadId: string, markdown: string): Promise<void> {
+  if (!mainWin || !markdown) return;
+  const res = await dialog.showSaveDialog(mainWin, { title: tr("Export conversation", "Xuất cuộc trò chuyện"), defaultPath: path.join(app.getPath("documents"), `${threadId}.md`),
+    filters: [{ name: "Markdown", extensions: ["md"] }] });
+  if (!res.canceled && res.filePath) writeFileSync(res.filePath, markdown, "utf8");
 }
 
 function sendUser(text: string, files: Attachment[]): void {
@@ -246,7 +328,7 @@ function sendUser(text: string, files: Attachment[]): void {
   local({ type: "_user", text: text || tr("(voice message)", "(tin nhắn thoại)"), attachments: files.map((f) => f.name) });
   avatar.userSent();
   companion.refreshState();
-  if (!client?.send({ type: "user", thread_id: THREAD, text, attachments: files })) {
+  if (!client?.send({ type: "user", thread_id: session.threadId, text, attachments: files })) {
     onEvent({ type: "error", code: "offline", message: tr("The agent is not running or not reachable yet.", "Agent chưa chạy hoặc chưa kết nối được.") });
   }
 }
@@ -303,6 +385,8 @@ function registerIpc(): void {
     if (action === "approvals") showApprovals();
     else if (action === "page" && fromMain) showMain(String(arg));
     else if (action === "rail" && fromMain) setRail(Boolean(arg));
+    else if (action === "thread" && fromMain && typeof arg === "string" && /^[\w-]{1,64}$/.test(arg)) switchThread(arg);
+    else if (action === "thread_new" && fromMain) newThread();
     else if (action === "quit" && fromMain) quit();
     else if (action === "record" && fromMain) arg ? companion.startRecording("chat") : companion.stopRecording(); // the chat's Talk button
   });
@@ -347,6 +431,8 @@ async function start(): Promise<void> {
     for (const m of [{ type: "settings_get" }, { type: "usage" }, { type: "about", ui_pid: process.pid }, { type: "screen_mode", action: "status" }]) client!.send(m);
     broadcast({ type: "_ui", ...uiState() });
     buildTray();
+    loadHistory(session);
+    refreshThreads();
   });
   client.on("disconnected", () => {
     avatar.connected = false;

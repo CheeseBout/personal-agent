@@ -55,6 +55,7 @@ from personal_agent.rag.watch import FolderWatcher
 from personal_agent.settings.secrets import get_api_token
 from personal_agent.settings.settings import config_dir, data_dir, load_settings, set_agent_name
 from personal_agent.storage import ensure_db_ok
+from personal_agent.threads import ThreadStore, entry_for, new_id
 from personal_agent.tools import procs
 from personal_agent.tools.files import workspace
 from personal_agent.tools.registry import policy
@@ -93,6 +94,7 @@ def create_app(brain: Brain | None = None, db_path: Path | None = None, token: s
         s.tracing = Tracing(settings, s.metrics)
         s.audit = AuditLog(data_dir() / "audit.db")
         s.approvals = ApprovalStore(data_dir() / "approvals.db")
+        s.threads = ThreadStore(data_dir() / "threads.db")
         s.kill = KillSwitch()
         s.kill.on_engage(procs.kill_all)  # host subprocesses first: they are the dangerous ones
         s.kill.on_engage(sandbox().stop)
@@ -119,6 +121,7 @@ def create_app(brain: Brain | None = None, db_path: Path | None = None, token: s
         ckpt = db_path or data_dir() / "checkpoints.db"
         ensure_db_ok(ckpt)
         async with AsyncSqliteSaver.from_conn_string(str(ckpt)) as saver:
+            s.saver = saver
             s.make_graph = lambda: build_graph(saver, brain, settings, s.meter, s.audit, s.approvals, s.kill)
             s.graph = s.make_graph()
             sched = services.scheduler()
@@ -132,6 +135,7 @@ def create_app(brain: Brain | None = None, db_path: Path | None = None, token: s
             for t in list(s.tasks):
                 t.cancel()
             await asyncio.gather(*s.tasks, return_exceptions=True)
+        s.threads.close()
         if s.watcher:
             s.watcher.stop()
         s.tracing.flush()
@@ -212,6 +216,8 @@ def create_app(brain: Brain | None = None, db_path: Path | None = None, token: s
         await asyncio.gather(*s.tasks, return_exceptions=True)
         for tid in threads:
             await settle(tid)
+            if s.threads.exists(tid):
+                s.threads.add(tid, "error", f"kill switch engaged (stopped on thread {tid})")
         s.active_threads.clear()
         return len(threads)
 
@@ -258,7 +264,8 @@ def create_app(brain: Brain | None = None, db_path: Path | None = None, token: s
                 app.state.screen.stop("no UI connected")
 
     MANAGE = {"memory_list", "memory_update", "memory_delete", "rag_list", "rag_pause", "rag_resume", "rag_sync", "rag_add", "rag_remove", "rag_search",
-              "mcp_list", "mcp_set", "mcp_reload", "mcp_add", "mcp_remove", "schedules", "schedule_cancel"}
+              "mcp_list", "mcp_set", "mcp_reload", "mcp_add", "mcp_remove", "schedules", "schedule_cancel",
+              "threads_list", "thread_new", "thread_history", "thread_rename", "thread_pin", "thread_delete", "thread_search", "thread_export"}
 
     async def manage(kind: str, msg: dict[str, Any]) -> dict[str, Any]:
         """Management calls behind the Memory / RAG / MCP / Schedule pages (shown in the UI Manager window)."""
@@ -342,9 +349,50 @@ def create_app(brain: Brain | None = None, db_path: Path | None = None, token: s
             s.mcp_status = await mcp_client.load_tools()  # a broken mcp.yaml raises ValueError before anything is unloaded
             s.graph = s.make_graph()  # same checkpointer: threads (and pending approvals) continue
             return {**mcp_view(), "reloaded": True}
+        if kind.startswith("thread"):
+            return await manage_threads(kind, msg)
         if kind == "schedules":
             return {"type": "schedules", "items": services.scheduler().jobs()}
         return {"type": "schedule_cancel", "ok": services.scheduler().cancel(int(msg["id"]))}
+
+    def thread_tid(msg: dict[str, Any]) -> str:
+        tid = msg.get("thread_id")
+        if not isinstance(tid, str) or not _THREAD_ID.match(tid):
+            raise ValueError("invalid thread_id")
+        return tid
+
+    async def manage_threads(kind: str, msg: dict[str, Any]) -> dict[str, Any]:
+        """The conversation list behind the chat page: list, history, rename, pin, delete, search and export."""
+        s, store = app.state, app.state.threads
+        if kind == "threads_list":
+            pending = {p["thread_id"] for p in s.approvals.pending()}
+            items = [{**t, "running": t["id"] in s.active_threads, "pending": t["id"] in pending} for t in await asyncio.to_thread(store.threads)]
+            return {"type": "threads", "items": items}
+        if kind == "thread_new":
+            return {"type": "thread_new", "thread_id": new_id()}
+        if kind == "thread_search":
+            flag = {"approval": "approval", "attachment": "attach"}.get(str(msg.get("has", "")), "")
+            return {"type": "thread_results", "query": str(msg.get("query", ""))[:200],
+                    "items": await asyncio.to_thread(store.search, str(msg.get("query", ""))[:200], flag)}
+        tid = thread_tid(msg)
+        if kind == "thread_history":
+            before = msg.get("before")
+            page = await asyncio.to_thread(store.history, tid, before if isinstance(before, int) and not isinstance(before, bool) else None,
+                                           int(msg.get("limit", 200)))
+            return {"type": "thread_history", "thread_id": tid, "before": before, **page}
+        if kind == "thread_rename":
+            return {"type": "thread_renamed", "thread_id": tid, "ok": await asyncio.to_thread(store.rename, tid, str(msg.get("title", ""))),
+                    "title": str(msg.get("title", "")).strip()[:80]}
+        if kind == "thread_pin":
+            return {"type": "thread_pinned", "thread_id": tid, "ok": await asyncio.to_thread(store.pin, tid, bool(msg.get("pinned", True)))}
+        if kind == "thread_export":
+            return {"type": "thread_export", "thread_id": tid, "markdown": await asyncio.to_thread(store.export_markdown, tid)}
+        # thread_delete: never under a running task or a pending approval
+        if tid in s.active_threads or s.approvals.pending(tid):
+            raise ValueError("this conversation is running or waiting for your approval: stop it first")
+        removed = await asyncio.to_thread(store.delete, tid)
+        await s.saver.adelete_thread(tid)  # the agent's own context goes too
+        return {"type": "thread_deleted", "thread_id": tid, "removed": removed}
 
     ADMIN = {"settings_get", "settings_set", "secret_set", "test_role", "policy_get", "policy_set", "policy_add_path", "transcribe", "about", "screen_mode", "capture"}
 
@@ -517,6 +565,16 @@ def create_app(brain: Brain | None = None, db_path: Path | None = None, token: s
         tid = msg.get("thread_id", "default")
         if not isinstance(tid, str) or not _THREAD_ID.match(tid):
             return await send({"type": "error", "code": "bad_request", "message": "invalid thread_id"})
+        plain_send = send
+
+        async def tagged(ev: dict[str, Any]) -> None:  # every event carries its thread, and the history keeps what the user saw
+            ev = {"thread_id": tid, **ev}
+            if (row := entry_for(ev)) and not (row[0] == "error" and ev.get("code") in ("bad_request", "approval_pending")):  # a rejected request is not part of the conversation
+                await asyncio.to_thread(app.state.threads.add, tid, row[0], row[1], row[2], row[3])
+            await plain_send(ev)
+
+        send = tagged
+
         pending = app.state.approvals.pending(tid)
         if kind == "approve":
             decisions = msg.get("decisions")
@@ -541,6 +599,8 @@ def create_app(brain: Brain | None = None, db_path: Path | None = None, token: s
             except (ValueError, OSError, UnsupportedDocument) as e:
                 return await send({"type": "error", "code": "bad_request", "message": str(e)[:200]})
             graph_input = {"messages": [HumanMessage(content)]}
+            names = [str(f.get("name", ""))[:80] for f in files if isinstance(f, dict)] if isinstance(files, list) else []
+            await asyncio.to_thread(app.state.threads.add, tid, "user", text, {"attachments": names}, "attach" if names else "")
             if files or msg.get("untrusted"):  # attachments are untrusted text; a scheduled run is unattended: side effects need approval
                 graph_input["tainted"] = True
         # Budgets stop runs in code; this is only a backstop against a routing bug.
@@ -594,6 +654,8 @@ def create_app(brain: Brain | None = None, db_path: Path | None = None, token: s
             for r in update.get("wresults", []):
                 await send({"type": "worker", "step": r["step"], "role": r["role"], "status": r["status"],
                             "summary": redact(r["summary"])[:300], "tokens": r["used"]["tokens"], "cost": r["used"]["cost"]})
+        elif node == "compact" and update.get("summary"):
+            await send({"type": "compacted"})
         elif node == "verify":
             await send({"type": "verdict", "status": update.get("verdict"), "notes": redact(update.get("notes", ""))})
         if node == "gate":
