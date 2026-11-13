@@ -6,6 +6,7 @@ import { app, BrowserWindow, dialog, ipcMain, type IpcMainInvokeEvent, Menu, nat
 import { AvatarState } from "../shared/avatarState";
 import { setLanguage, tr } from "../shared/i18n";
 import { type Ev, Session } from "../shared/session";
+import { hasProviderKey } from "../shared/settings";
 import { DEFAULT_HIGHLIGHT } from "../shared/theme";
 import type { Attachment } from "../shared/attach";
 import { Companion } from "./companion";
@@ -28,6 +29,9 @@ let about: Ev | null = null; // pid, data_dir, config_dir
 let railCollapsed = false;
 let page = "chat";
 let quitting = false;
+let settingsSeen = false;
+// Start with only the avatar (and the tray): the chat opens from the avatar, the tray or a hotkey. Set by scripts/run.ps1.
+const background = process.env.PERSONAL_AGENT_BACKGROUND === "1" || process.argv.includes("--background");
 let seq = 0; // every broadcast is numbered, so a window that starts from a snapshot knows which events it already contains
 const hotkeys = new Hotkeys();
 // Daemon events only the main process needs (large payloads, or not for a page that renders untrusted text).
@@ -154,6 +158,10 @@ function onSettings(ev: Ev): void {
   for (const w of [mainWin, approvalsWin]) w?.setIcon(orbIcon(highlight(), 64));
   buildTray();
   companion.applySettings(ev.ui ?? {});
+  if (background && !settingsSeen) { // a window is still needed when there is nothing else to see or the first-run wizard (provider key) is pending
+    if (!ev.ui?.avatar_enabled || !hasProviderKey(ev)) showMain("chat");
+  }
+  settingsSeen = true;
   const keys = { kill, chat: () => showMain("chat"), capture: () => companion.capture("screen"), watch: () => companion.toggleWatch(),
     talk: () => companion.toggleTalk() };
   if (hotkeys.apply(ev.ui?.hotkeys ?? {}, keys)) {
@@ -323,7 +331,7 @@ async function start(): Promise<void> {
   approvalsWin = createWindow("approvals", { width: 720, height: 760, minWidth: 480, minHeight: 360, icon: orbIcon(DEFAULT_HIGHLIGHT, 64) });
   hideInsteadOfClosing(mainWin);
   hideInsteadOfClosing(approvalsWin);
-  mainWin.once("ready-to-show", () => showMain("chat"));
+  mainWin.once("ready-to-show", () => background || showMain("chat"));
   nativeTheme.on("updated", () => broadcast({ type: "_ui", ...uiState() }));
   buildTray();
   applyName();

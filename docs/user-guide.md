@@ -3,7 +3,8 @@
 ## Install and run
 ```powershell
 python -m pip install --user uv
-.\scripts\run.ps1            # installs everything, starts the daemon and the desktop UI
+.\scripts\run.ps1            # installs everything, starts the daemon and the avatar (open the chat from the avatar or the tray)
+.\scripts\run.ps1 -Window    # same, and open the chat window at start
 .\scripts\run.ps1 -Chat      # terminal chat instead of the UI
 ```
 Manually: `python -m uv sync --extra voice --extra screen --extra observability --extra mcp`, then `python -m uv run agent-core` (daemon, 127.0.0.1:8765) and either `python -m uv run agent-chat` or the desktop UI: `npm --prefix electron-ui install` once, then `npm --prefix electron-ui run start` (needs Node.js 20+).

@@ -149,7 +149,7 @@ class UiCfg(BaseModel):
     avatar_always_on_top: bool = True
     avatar_wander: bool = False
     sleep_after_s: int = 300
-    highlight: str = Field(default="#E8742F", pattern=r"^#[0-9a-fA-F]{6}$")  # accent colour: logo, badges, primary buttons, focus
+    highlight: str = Field(default="#3340D9", pattern=r"^#[0-9a-fA-F]{6}$")  # accent colour: logo, badges, primary buttons, focus
     hotkeys: dict[str, str] = Field(default_factory=lambda: {
         "kill": "ctrl+alt+k", "talk": "ctrl+alt+space", "chat": "ctrl+alt+a",
         "capture": "ctrl+alt+s", "watch": "ctrl+alt+w"})

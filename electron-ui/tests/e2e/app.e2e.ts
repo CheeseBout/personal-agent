@@ -153,7 +153,7 @@ it("settings: only the change is saved, a rename reaches every title, and an uns
   expect(titles).toEqual(expect.arrayContaining(["Mimi", "Mimi — Approvals"]));
   await r.main.waitForFunction(() => (window as any).agent.init().then((i: any) => i.settings.ui.avatar_scale === 1.7)); // the rename and the patch are two replies
   await r.main.locator(".swatch").nth(1).click();
-  expect(await r.main.evaluate(() => document.documentElement.style.getPropertyValue("--accent"))).toBe("#3340D9");
+  expect(await r.main.evaluate(() => document.documentElement.style.getPropertyValue("--accent"))).toBe("#E8742F");
   await r.main.locator(".tab", { hasText: "Models" }).click();
   await r.main.locator(".form button", { hasText: "Test" }).first().click();
   await r.main.waitForFunction(() => document.querySelector(".testres")?.textContent === "✔");
@@ -163,5 +163,5 @@ it("settings: only the change is saved, a rename reaches every title, and an uns
   await r.main.waitForFunction(() => /RAM \d+ MB/.test(document.querySelector(".tabbody")?.textContent ?? ""));
   await shot(r.main, "settings");
   await r.main.locator(".nav", { hasText: "Chat" }).click();
-  expect(await r.main.evaluate(() => document.documentElement.style.getPropertyValue("--accent"))).toBe("#E8742F"); // not saved: the real colour is back
+  expect(await r.main.evaluate(() => document.documentElement.style.getPropertyValue("--accent"))).toBe("#3340D9"); // not saved: the real colour is back
 });

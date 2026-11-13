@@ -6,6 +6,7 @@ import { type RadialItem, RING_MARGIN, RING_THICK, slotAt } from "../../shared/a
 import { tr } from "../../shared/i18n";
 import type { Ev } from "../../shared/session";
 import { onColor } from "../../shared/theme";
+import { Icon } from "./Icon";
 import { store, useStore } from "./store";
 
 const post = (name: string, ...args: unknown[]): Promise<any> => window.agent.overlay(name, ...args);
@@ -156,6 +157,7 @@ export function Radial(): React.JSX.Element | null {
       <svg width={2 * c} height={2 * c}>
         {items.map((item, i) => {
           const isArmed = item === armed, danger = item.danger || isArmed;
+          // the window palette, so the ring matches the app: surface, accent on hover, soft accent when on, red for the dangerous one
           const fill = isArmed ? t("critical") : i === hover ? t("accent") : item.active ? t("accent-soft") : t("surface");
           const edge = isArmed || i === hover ? "none" : item.active ? t("accent") : danger ? t("critical") : t("muted");
           return <path key={i} d={sector(i)} fill={fill} fillOpacity={0.965} stroke={edge} strokeWidth={item.active ? 2 : 1} strokeOpacity={item.active || danger ? 1 : 0.35} />;
@@ -170,7 +172,7 @@ export function Radial(): React.JSX.Element | null {
         return (
           <div key={i}>
             <div className="slot" style={{ left: x - 40, top: y - 27, color }}>
-              <div className="glyph">{item.glyph}</div>
+              <div className="glyph">{item.glyph.startsWith("i:") ? <Icon name={item.glyph.slice(2)} /> : item.glyph}</div>
               <div className="label">{isArmed ? tr("Click again", "Bấm lần nữa") : item.label + (item.children ? " ›" : "")}</div>
             </div>
             {i < 9 && <div className="key" style={{ left: nx - 8, top: ny - 8, color }}>{i + 1}</div>}

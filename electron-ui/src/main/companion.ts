@@ -334,26 +334,26 @@ export class Companion {
       this.actions[id] = run;
       return { id, label: tr(en, vi), glyph, ...extra };
     };
-    const pages: [string, string, string, string][] = [["memory", "Memory", "Bộ nhớ", "M"], ["rag", "Documents", "Tài liệu", "D"], ["mcp", "Tools / MCP", "Công cụ", "T"],
-      ["schedules", "Schedules", "Lịch chạy", "S"], ["rules", "Remembered", "Đã nhớ", "R"], ["audit", "Audit log", "Nhật ký", "A"],
-      ["usage", "Usage", "Mức dùng", "U"], ["policy", "Policy", "Chính sách", "P"]];
+    const pages: [string, string, string, string][] = [["memory", "Memory", "Bộ nhớ", "i:memory"], ["rag", "Documents", "Tài liệu", "i:rag"], ["mcp", "Tools / MCP", "Công cụ", "i:mcp"],
+      ["schedules", "Schedules", "Lịch chạy", "i:schedules"], ["rules", "Remembered", "Đã nhớ", "i:rules"], ["audit", "Audit log", "Nhật ký", "i:audit"],
+      ["usage", "Usage", "Mức dùng", "i:usage"], ["policy", "Policy", "Chính sách", "i:policy"]];
     return [
-      item("Chat", "Chat", "C", () => h.showMain("chat")),
-      item("Talk", "Nói", "T", () => this.toggleTalk(), { active: this.recording }),
-      { label: tr("Capture", "Chụp"), glyph: "C", children: [
-        item("Whole screen", "Toàn màn hình", "S", () => this.capture("screen")),
-        item("Window (2 s)", "Cửa sổ (2 giây)", "W", () => this.captureWindowSoon()),
-        item("Select area", "Chọn vùng", "A", () => this.captureRegion())] },
-      item(watching ? "Stop watching" : "Watch screen", watching ? "Dừng theo dõi" : "Theo dõi màn hình", "W", () => this.toggleWatch(), { active: watching }),
-      item("Approvals", "Phê duyệt", "A", () => h.showApprovals(), { badge: Object.keys(h.session.approvals).length }),
-      { label: tr("Manage", "Quản lý"), glyph: "M", children: pages.map(([k, en, vi, g]) => item(en, vi, g, () => h.showMain(k))) },
+      item("Chat", "Chat", "i:chat", () => h.showMain("chat")),
+      item("Talk", "Nói", "i:mic", () => this.toggleTalk(), { active: this.recording }),
+      { label: tr("Capture", "Chụp"), glyph: "i:cam", children: [
+        item("Whole screen", "Toàn màn hình", "i:screen", () => this.capture("screen")),
+        item("Window (2 s)", "Cửa sổ (2 giây)", "i:window", () => this.captureWindowSoon()),
+        item("Select area", "Chọn vùng", "i:area", () => this.captureRegion())] },
+      item(watching ? "Stop watching" : "Watch screen", watching ? "Dừng theo dõi" : "Theo dõi màn hình", "i:eye", () => this.toggleWatch(), { active: watching }),
+      item("Approvals", "Phê duyệt", "i:approvals", () => h.showApprovals(), { badge: Object.keys(h.session.approvals).length }),
+      { label: tr("Manage", "Quản lý"), glyph: "i:memory", children: pages.map(([k, en, vi, g]) => item(en, vi, g, () => h.showMain(k))) },
       { label: tr("More", "Thêm"), glyph: "⋯", children: [
-        item("Settings", "Cài đặt", "S", () => h.showMain("settings")),
-        item("Stop speaking", "Ngừng đọc", "S", () => this.stopSpeaking()),
-        item("Resume agent", "Cho chạy lại", "R", () => void h.send({ type: "release_kill" })),
-        item("Hide avatar", "Ẩn avatar", "H", () => this.toggleAvatar()),
-        item("Quit the UI", "Thoát giao diện", "Q", () => h.quit())] },
-      item("Pause agent", "Dừng agent", "!", () => h.kill(), { danger: true }), // the kill switch: needs a second click
+        item("Settings", "Cài đặt", "i:settings", () => h.showMain("settings")),
+        item("Stop speaking", "Ngừng đọc", "i:mute", () => this.stopSpeaking()),
+        item("Resume agent", "Cho chạy lại", "i:resume", () => void h.send({ type: "release_kill" })),
+        item("Hide avatar", "Ẩn avatar", "i:hide", () => this.toggleAvatar()),
+        item("Quit the UI", "Thoát giao diện", "i:exit", () => h.quit())] },
+      item("Pause agent", "Dừng agent", "i:power", () => h.kill(), { danger: true }), // the kill switch: needs a second click
     ];
   }
 

@@ -1,10 +1,11 @@
 /** One visual system for every window: colour tokens (light and dark) and everything derived from the ONE highlight colour the user picks.
  * The risk scale and the avatar state colours keep their own fixed meaning. */
 
-export const DEFAULT_HIGHLIGHT = "#E8742F";
-const LIGHT = { bg: "#E3E8EC", surface: "#F7F9FA", sunken: "#EDF1F3", ink: "#101A33", muted: "#566280", line: "#C9D1D9",
+export const DEFAULT_HIGHLIGHT = "#3340D9";
+// `signal` is the one colour that means "this needs your decision" (approvals); it never follows the highlight.
+const LIGHT = { bg: "#E4E9EE", surface: "#FBFCFD", sunken: "#EEF2F5", ink: "#0F1B3D", muted: "#586583", line: "#CBD3DC", signal: "#E8742F",
   low: "#1F7A4D", medium: "#8F6208", high: "#B94A14", critical: "#B1232B", add: "#1F7A4D", del: "#B1232B", hunk: "#2B5CA8" };
-const DARK = { bg: "#0A0A0A", surface: "#151515", sunken: "#0F0F0F", ink: "#ECECEC", muted: "#9B9B9B", line: "#2A2A2A",
+const DARK = { bg: "#0B0E14", surface: "#151A24", sunken: "#10141C", ink: "#E9EDF5", muted: "#97A1B7", line: "#272F3F", signal: "#F08A56",
   low: "#58C282", medium: "#E0B04A", high: "#F08A56", critical: "#F2777D", add: "#58C282", del: "#F2777D", hunk: "#7FA6E8" };
 // Avatar and overlays float over any desktop, so they use fixed mid-tone colours instead of the window palette.
 export const STATE: Record<string, string> = { idle: "#5B8DEF", listening: "#3FB7C9", thinking: "#9B7FE0", working: "#E3A52F",

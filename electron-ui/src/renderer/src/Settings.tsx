@@ -6,7 +6,7 @@ import { type Form, formFrom, hasProviderKey, PROVIDER_KEYS, settingsPatch } fro
 import { applyTheme, DEFAULT_HIGHLIGHT } from "../../shared/theme";
 import { store, useStore } from "./store";
 
-const HIGHLIGHTS: [string, string, string][] = [["#E8742F", "Orange", "Cam"], ["#3340D9", "Ultramarine", "Xanh chàm"], ["#0F9D8A", "Teal", "Xanh ngọc"],
+const HIGHLIGHTS: [string, string, string][] = [["#3340D9", "Ultramarine", "Xanh chàm"], ["#E8742F", "Orange", "Cam"], ["#0F9D8A", "Teal", "Xanh ngọc"],
   ["#2C9A5B", "Green", "Xanh lá"], ["#E0407B", "Pink", "Hồng"], ["#7A4DE0", "Violet", "Tím"], ["#E0A21F", "Amber", "Hổ phách"], ["#D64545", "Red", "Đỏ"]];
 const KEY_HELP: Record<string, string> = { ANTHROPIC_API_KEY: "Anthropic (Claude)", GOOGLE_API_KEY: "Google (Gemini)", OPENAI_API_KEY: "OpenAI",
   OPENROUTER_API_KEY: "OpenRouter", LANGFUSE_PUBLIC_KEY: "Langfuse public key", LANGFUSE_SECRET_KEY: "Langfuse secret key", LANGFUSE_BASE_URL: "Langfuse URL" };

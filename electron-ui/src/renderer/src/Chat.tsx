@@ -3,10 +3,11 @@ import { memo, useEffect, useMemo, useRef, useState } from "react";
 import { type Attachment, checkSize, mimeOf, roomFor } from "../../shared/attach";
 import { tr } from "../../shared/i18n";
 import type { Entry, Session } from "../../shared/session";
+import { Icon } from "./Icon";
 import { renderMarkdown } from "./markdown";
 import { store, useStore } from "./store";
 
-const MARK: Record<string, string> = { todo: "☐", done: "✔", failed: "✖", blocked: "–" };
+const MARK: Record<string, string> = { todo: "", done: "✓", failed: "✕", blocked: "!" };
 
 function readFile(f: File, name = f.name): Promise<Attachment> {
   checkSize(name, f.size);
@@ -42,18 +43,30 @@ function PlanPanel({ s }: { s: Session }): React.JSX.Element {
   const u = s.used, today = s.usage.today ?? {}, caps = s.usage.caps ?? {};
   return (
     <aside className="plan">
-      <div className="title">{tr("Plan and progress", "Kế hoạch và tiến độ")}</div>
-      <p>{s.plan ? s.plan.objective : tr("(no plan: a simple question needs none)", "(chưa có kế hoạch)")}</p>
-      <label>{tr("Success criteria", "Tiêu chí thành công")}</label>
-      <ul className="list">{(s.plan?.criteria ?? []).map((c, i) => <li key={i}>• {c}</li>)}</ul>
-      <label>{tr("Steps", "Các bước")}</label>
-      <ul className="list grow">{s.steps.map((x, i) => <li key={i}>{MARK[x.status] ?? "☐"} [{x.role}] {x.text}</li>)}</ul>
+      <div>
+        <h2>{tr("Task", "Nhiệm vụ")}</h2>
+        {s.plan ? <p className="obj">{s.plan.objective}</p>
+          : <div className="none">{tr("A simple question needs no plan. Give a bigger task and its steps appear here.", "Câu hỏi đơn giản không cần kế hoạch. Giao việc lớn hơn, các bước sẽ hiện ở đây.")}</div>}
+      </div>
+      {s.plan && (
+        <>
+          <div><h2>{tr("Done when", "Hoàn thành khi")}</h2><ul className="crit">{(s.plan.criteria ?? []).map((c, i) => <li key={i}>{c}</li>)}</ul></div>
+          <div>
+            <h2>{tr("Steps", "Các bước")}</h2>
+            <ol className="steps">{s.steps.map((x, i) => (
+              <li key={i} className={x.status}><span className="mk" aria-hidden="true">{MARK[x.status] ?? ""}</span><span><span className="role">{x.role}</span>{x.text}</span></li>
+            ))}</ol>
+          </div>
+        </>
+      )}
       {Object.keys(u).length > 0 && <p className="muted">{tr("This task: {steps} steps, {tools} tool calls, {tokens} tokens, ${cost}",
         "Tác vụ này: {steps} bước, {tools} lần gọi công cụ, {tokens} token, ${cost}",
         { steps: u.steps ?? 0, tools: u.tool_calls ?? 0, tokens: u.tokens ?? 0, cost: Number(u.cost ?? 0).toFixed(4) })}</p>}
-      <label>{tr("Today's budget", "Ngân sách hôm nay")}</label>
-      <Meter used={today.tokens ?? 0} cap={caps.tokens} unit="tokens" />
-      <Meter used={today.cost_usd ?? 0} cap={caps.cost_usd} unit="$" />
+      <div>
+        <h2>{tr("Today's budget", "Ngân sách hôm nay")}</h2>
+        <Meter used={today.tokens ?? 0} cap={caps.tokens} unit="tokens" />
+        <Meter used={today.cost_usd ?? 0} cap={caps.cost_usd} unit="$" />
+      </div>
     </aside>
   );
 }
@@ -130,6 +143,7 @@ export function Chat(): React.JSX.Element {
             }}>✕</button></span>
           ))}</div>
         )}
+        <div className="compose">
         <textarea ref={box} className="composer" value={text} onChange={(e) => setText(e.target.value)}
           placeholder={tr("Message… (Enter sends, Shift+Enter = new line; paste or drop images and files)",
             "Tin nhắn… (Enter để gửi, Shift+Enter xuống dòng; dán hoặc kéo thả ảnh, tệp)")}
@@ -147,18 +161,17 @@ export function Chat(): React.JSX.Element {
             }
           }} />
         <div className="row">
-          <label className="btn">{tr("Attach", "Đính kèm")}
+          <label className="btn ghost"><Icon name="clip" />{tr("Attach", "Đính kèm")}
             <input type="file" multiple hidden onChange={(e) => {
               void add([...(e.target.files ?? [])]);
               e.target.value = "";
             }} />
           </label>
-          <button className={ui.recording ? "on" : ""} aria-pressed={ui.recording} onClick={() => void window.agent.ui("record", !ui.recording)}>
-            {ui.recording ? tr("Stop", "Dừng") : tr("Talk", "Nói")}</button>
-          <button className="danger" onClick={() => void window.agent.send({ type: "kill" })}>{tr("Stop all", "Dừng tất cả")}</button>
-          <span className="status">{status}</span>
-          <button className="primary" disabled={pending > 0} onClick={send}>{tr("Send", "Gửi")}</button>
-          <button onClick={() => void window.agent.ui("quit")} title={tr("Close the app (Ctrl+Q). The background agent keeps running.", "Đóng ứng dụng (Ctrl+Q). Agent nền vẫn chạy.")}>{tr("Quit", "Thoát")}</button>
+          <button className={"ghost" + (ui.recording ? " on" : "")} aria-pressed={ui.recording} onClick={() => void window.agent.ui("record", !ui.recording)}>
+            <Icon name="mic" />{ui.recording ? tr("Stop", "Dừng") : tr("Talk", "Nói")}</button>
+          <span className={"status" + (pending ? " wait" : "")}>{status}</span>
+          <button className="primary" disabled={pending > 0} onClick={send}><Icon name="send" />{tr("Send", "Gửi")}</button>
+        </div>
         </div>
       </section>
       <PlanPanel s={s} />

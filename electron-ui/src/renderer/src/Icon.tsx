@@ -1,0 +1,31 @@
+/** Line icons (24 px grid, drawn with the current text colour). No icon font: the content-security policy allows no remote file. */
+const PATHS: Record<string, string> = {
+  chat: "M4 5h16v11H9l-5 4z",
+  approvals: "M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6zM8.5 12l2.5 2.5 4.5-5",
+  memory: "M12 3l9 5-9 5-9-5zM3 13l9 5 9-5",
+  rag: "M6 3h8l4 4v14H6zM14 3v4h4M9 12h6M9 16h6",
+  mcp: "M9 3v5M15 3v5M6 8h12v3a6 6 0 0 1-12 0zM12 17v4",
+  schedules: "M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18zM12 7v5l3 2",
+  rules: "M7 3h10v18l-5-4-5 4z",
+  policy: "M4 7h10M18 7h2M4 17h2M10 17h10M14 5v4M6 15v4",
+  audit: "M8 6h12M8 12h12M8 18h12M4 6h.01M4 12h.01M4 18h.01",
+  usage: "M4 20V10M10 20V4M16 20v-8M22 20H2",
+  settings: "M12 8.5a3.5 3.5 0 1 0 0 7 3.5 3.5 0 0 0 0-7zM12 2v3M12 19v3M2 12h3M19 12h3M5 5l2 2M17 17l2 2M19 5l-2 2M7 17l-2 2",
+  clip: "M20 11l-8 8a5 5 0 0 1-7-7l8-8a3.5 3.5 0 0 1 5 5l-8 8a2 2 0 0 1-3-3l7-7",
+  mic: "M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3zM6 11a6 6 0 0 0 12 0M12 17v4",
+  send: "M4 12l16-8-6 16-2-7z",
+  power: "M12 3v9M6.5 6.5a8 8 0 1 0 11 0",
+  menu: "M4 7h16M4 12h16M4 17h16",
+  eye: "M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12zM12 9a3 3 0 1 0 0 6 3 3 0 0 0 0-6z",
+  x: "M6 6l12 12M18 6L6 18",
+  exit: "M10 4H5v16h5M15 8l4 4-4 4M19 12H9",
+  cam: "M4 8h3l2-3h6l2 3h3v11H4zM12 10a3.5 3.5 0 1 0 0 7 3.5 3.5 0 0 0 0-7z",
+  screen: "M3 5h18v11H3zM8 20h8M12 16v4",
+  window: "M3 5h18v14H3zM3 9h18",
+  area: "M4 8V4h4M16 4h4v4M20 16v4h-4M8 20H4v-4",
+  mute: "M4 9h4l5-4v14l-5-4H4zM17 9l4 6M21 9l-4 6",
+  resume: "M7 4l13 8-13 8z",
+  hide: "M3 3l18 18M10.6 6.2A10 10 0 0 1 12 6c6 0 10 6 10 6a17 17 0 0 1-3 3.6M6.1 7.3A17 17 0 0 0 2 12s4 7 10 7a9.7 9.7 0 0 0 4-.9",
+};
+
+export const Icon = ({ name }: { name: string }): React.JSX.Element => <svg className="i" viewBox="0 0 24 24" aria-hidden="true"><path d={PATHS[name] ?? ""} /></svg>;

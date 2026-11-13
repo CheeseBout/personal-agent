@@ -12,7 +12,8 @@ and screen perception/control. Vietnamese and English; cloud LLMs by default (Cl
 ## Quick start
 ```powershell
 python -m pip install --user uv
-.\scripts\run.ps1            # installs everything, starts the daemon and the desktop UI (a wizard asks for a key)
+.\scripts\run.ps1            # installs everything, starts the daemon and the avatar; open the chat from the avatar or the tray (a wizard asks for a key)
+.\scripts\run.ps1 -Window    # same, and open the chat window at start
 .\scripts\run.ps1 -Chat      # terminal chat instead
 ```
 Add a key in the wizard or copy `.env.example` to `.env` (`ANTHROPIC_API_KEY`, `GOOGLE_API_KEY`, ...). Optional: Ollama (`ollama pull bge-m3`) for document search, Docker Desktop for sandboxed code, Langfuse keys for tracing.

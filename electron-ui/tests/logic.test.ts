@@ -165,8 +165,9 @@ describe("approval decisions", () => {
 
 describe("theme and i18n", () => {
   it("derives the same tokens as the Python theme", () => {
-    expect(tokens(false)).toMatchObject({ accent: "#E8742F", accent_hover: "#BE5F27", on_accent: "#111111", accent_soft: "#F5E4DA", accent_text: "#925031" });
-    expect(tokens(true, "#3340D9")).toMatchObject({ accent_hover: "#2A34B2", on_accent: "#FFFFFF", accent_soft: "#1B1E3C", accent_text: "#7D85E1", bg: "#0A0A0A" });
+    expect(tokens(false)).toMatchObject({ accent: "#3340D9", accent_hover: "#2A34B2", on_accent: "#FFFFFF", accent_soft: "#DBDEF7", accent_text: "#25319B" });
+    expect(tokens(false, "#E8742F")).toMatchObject({ accent: "#E8742F", accent_hover: "#BE5F27", on_accent: "#111111" });
+    expect(tokens(true, "#3340D9")).toMatchObject({ accent_hover: "#2A34B2", on_accent: "#FFFFFF", accent_soft: "#1B2248", accent_text: "#7C85E4", bg: "#0B0E14", signal: "#F08A56" });
     expect(onColor("#E0A21F")).toBe("#111111");
     expect(mix("#FFFFFF", "#000000", 0.5)).toBe("#808080");
   });
