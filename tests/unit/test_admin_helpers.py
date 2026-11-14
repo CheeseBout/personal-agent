@@ -57,3 +57,14 @@ def test_policy_add_path_also_handles_the_one_line_form_and_keeps_comments(tmp_p
     assert text.startswith("# keep me")
     allowed = yaml.safe_load(text)["paths"]["allow"]
     assert allowed[0] == "C:\\a" and str(folder) in allowed  # the quote in the folder name survived
+
+
+def test_policy_add_path_works_on_the_shipped_policy_with_its_trailing_comment(tmp_path: Path) -> None:
+    pol = Path(os.environ["PERSONAL_AGENT_CONFIG_DIR"]) / "policy.yaml"
+    pol.write_text(Path("config/policy.yaml").read_text(encoding="utf-8"), encoding="utf-8")  # the file as shipped: `allow: [...]  # comment`
+    folder = tmp_path / "more"
+    folder.mkdir()
+    policy_add_path(str(folder))
+    after = policy_text()
+    assert str(folder) in after and "# the first entry is also the agent's working folder" in after
+    assert str(folder) in yaml.safe_load(after)["paths"]["allow"]

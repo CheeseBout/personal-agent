@@ -143,7 +143,7 @@ def policy_add_path(path: str) -> None:
         raise ValueError("not an existing folder")
     text = policy_text()
     quoted = "'" + str(p).replace("'", "''") + "'"
-    if (m := re.search(r"^(\s*allow:\s*)\[(.*)\][ \t]*$", text, re.MULTILINE)) is not None:  # allow: [a, b]
+    if (m := re.search(r"^(\s*allow:\s*)\[(.*?)\][ \t]*(?:#.*)?$", text, re.MULTILINE)) is not None:  # allow: [a, b]  # a trailing comment is kept
         if quoted in m.group(2):
             return
         policy_save(text[:m.end(2)] + (", " if m.group(2).strip() else "") + quoted + text[m.end(2):])
