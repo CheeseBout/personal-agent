@@ -14,7 +14,7 @@
     "dist": "node node_modules/electron/install.js && electron-vite build && electron-builder --win dir"
   },
   "dependencies": {
-    "ws": "^8.22.2"
+    "ws": "^8.23.0"
   },
   "devDependencies": {
     "@types/markdown-it": "^14.2.0",
