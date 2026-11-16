@@ -148,20 +148,38 @@ button.burger:hover { background: var(--sunken); color: var(--ink); }
 .meter .fill { position: absolute; inset: 0 auto 0 0; background: color-mix(in srgb, var(--accent) 30%, var(--sunken)); border-right: 2px solid var(--accent); }
 .meter span { position: absolute; inset: 0; display: flex; align-items: center; padding: 0 9px; font: 9pt var(--mono); }
 
-/* ---- approvals: a release slip per action ---- */
-.approvals { height: 100%; overflow-y: auto; padding: 12px 20px 20px; user-select: text; }
-.thread { margin-bottom: 22px; max-width: 880px; }
-.thread .title { font: 700 11.5pt var(--head); color: var(--muted); margin-bottom: 8px; }
-.thread > button.primary { margin-top: 2px; }
-.card { --tc: var(--muted); position: relative; background: var(--surface); border: 1px solid var(--line); border-top: 4px solid var(--tc); border-radius: var(--r); margin: 0 0 14px;
-  padding: 16px 20px 18px; display: flex; flex-direction: column; gap: 12px; min-width: 0; box-shadow: 0 12px 28px -20px rgba(15, 27, 61, 0.45); }
+/* ---- approvals: a queue of requests, one release slip, one decision bar ---- */
+.approvals { height: 100%; display: flex; flex-direction: column; user-select: text; }
+.queue { flex: none; display: flex; gap: 8px; padding: 12px 20px 4px; overflow-x: auto; }
+button.q { --tc: var(--muted); flex: none; position: relative; display: flex; flex-direction: column; align-items: flex-start; gap: 1px; min-width: 132px; padding: 6px 12px 9px;
+  background: var(--surface); border: 1px solid var(--line); border-radius: var(--r); text-align: left; overflow: hidden; }
+button.q.risk-low { --tc: var(--low); }
+button.q.risk-medium { --tc: var(--medium); }
+button.q.risk-high { --tc: var(--high); }
+button.q.risk-critical { --tc: var(--critical); }
+button.q.on { border-color: var(--ink); box-shadow: 0 0 0 1px var(--ink); }
+button.q.done { background: var(--sunken); }
+.q .qname { font: 500 10.5pt var(--mono); display: flex; align-items: center; gap: 6px; }
+.q .qtime { font: 9pt var(--mono); color: var(--muted); }
+.q .qmark { font-style: normal; font-weight: 700; font-size: 9pt; }
+.q .qmark.yes { color: var(--low); }
+.q .qmark.no { color: var(--critical); }
+.q .qfuse { position: absolute; left: 0; right: 0; bottom: 0; height: 3px; background: var(--line); }
+.q .qfuse i { display: block; height: 100%; background: var(--tc); transition: width 1s linear; }
+.focus { flex: 1; min-height: 0; overflow-y: auto; padding: 12px 20px 16px; }
+.decide { flex: none; display: grid; gap: 8px; padding: 10px 20px 12px; background: var(--surface); border-top: 1px solid var(--line); }
+.decide .send { display: flex; align-items: center; gap: 12px; }
+.decide .send p { flex: 1; margin: 0; }
+.card { --tc: var(--muted); position: relative; background: var(--surface); border: 1px solid var(--line); border-top: 4px solid var(--tc); border-radius: var(--r);
+  margin: 0; padding: 16px 20px 18px; display: flex; flex-direction: column; gap: 14px; min-width: 0; box-shadow: 0 12px 28px -20px rgba(15, 27, 61, 0.45); }
 .card.risk-low { --tc: var(--low); }
 .card.risk-medium { --tc: var(--medium); }
 .card.risk-high { --tc: var(--high); }
 .card.risk-critical { --tc: var(--critical); }
 .card .head { display: flex; gap: 18px; align-items: flex-start; flex-wrap: wrap; }
 .card .head > div:first-child { flex: 1; min-width: 220px; }
-.card b { font: 500 15pt var(--mono); letter-spacing: -0.02em; }
+.card .head p { max-width: 62ch; }
+.card b { font: 500 17pt var(--mono); letter-spacing: -0.02em; }
 .card .fuse { position: absolute; left: 0; right: 0; top: -4px; height: 4px; background: var(--sunken); border-radius: var(--r) var(--r) 0 0; overflow: hidden; }
 .card .fuse i { display: block; height: 100%; background: var(--signal); transition: width 1s linear; }
 .ruler { min-width: 170px; display: grid; gap: 4px; }
@@ -174,26 +192,33 @@ button.burger:hover { background: var(--sunken); color: var(--ink); }
   background: repeating-linear-gradient(135deg, color-mix(in srgb, var(--signal) 13%, var(--surface)) 0 10px, color-mix(in srgb, var(--signal) 4%, var(--surface)) 10px 20px);
   border: 1px solid color-mix(in srgb, var(--signal) 40%, var(--line)); }
 .card label.cap { margin: 0 0 4px; font: 600 10pt var(--head); color: var(--muted); }
-.card .args { height: 104px; resize: vertical; }
-.card .preview { min-height: 90px; max-height: 300px; overflow: auto; margin: 0; background: var(--sunken); border: 1px solid var(--line); border-radius: var(--r); padding: 4px 0;
+.card .preview { min-height: 120px; max-height: 360px; overflow: auto; margin: 0; background: var(--sunken); border: 1px solid var(--line); border-radius: var(--r); padding: 6px 0;
   white-space: pre-wrap; overflow-wrap: anywhere; }
 .preview > div { padding: 0 12px; border-left: 3px solid transparent; }
 .preview .add { color: var(--add); background: color-mix(in srgb, var(--add) 9%, transparent); border-left-color: var(--add); }
 .preview .del { color: var(--del); background: color-mix(in srgb, var(--del) 9%, transparent); border-left-color: var(--del); }
 .preview .hunk { color: var(--hunk); }
 .preview .head { font-weight: 700; }
+.card details summary { cursor: pointer; font: 600 10pt var(--head); color: var(--muted); padding: 2px 0; }
+.card details summary:hover { color: var(--ink); }
+.card details summary em { margin-left: 10px; font-style: normal; font-weight: 500; color: var(--signal); }
+.card details .args { height: 110px; resize: vertical; margin-top: 6px; }
+.card details button { margin-top: 6px; }
 .choices { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
 .radio { position: relative; display: block; margin: 0; cursor: pointer; }
 .radio input { position: absolute; opacity: 0; inset: 0; margin: 0; width: 100%; height: 100%; cursor: pointer; }
-.radio span { display: block; height: 100%; border: 1.5px solid var(--line); border-radius: var(--r); padding: 8px 12px; font-weight: 600; background: var(--surface); }
+.radio span { position: relative; display: block; height: 100%; border: 1.5px solid var(--line); border-radius: var(--r); padding: 7px 12px; font-weight: 600; background: var(--surface); }
 .radio small { display: block; font-weight: 400; color: var(--muted); font-size: 9.5pt; }
+.radio kbd { position: absolute; top: 6px; right: 8px; font: 8.5pt var(--mono); color: var(--muted); border: 1px solid var(--line); border-radius: 4px; padding: 0 5px; }
 .radio input:focus-visible + span { outline: 2px solid var(--accent); outline-offset: 2px; }
 .radio input:checked + span { border-color: var(--ink); background: var(--ink); color: var(--surface); }
 .radio input:checked + span small { color: color-mix(in srgb, var(--surface) 72%, transparent); }
+.radio input:checked + span kbd { color: inherit; border-color: color-mix(in srgb, var(--surface) 40%, transparent); }
 .radio.rej input:checked + span { background: var(--critical); border-color: var(--critical); color: #fff; }
 .radio.rej input:checked + span small { color: #fff; }
 .zero { max-width: 460px; margin: 60px auto; text-align: center; color: var(--muted); }
 .zero .title { color: var(--ink); font-size: 16pt; margin-bottom: 6px; }
+@media (max-width: 560px) { .choices { grid-template-columns: 1fr; } .radio kbd { display: none; } }
 
 /* ---- manager pages ---- */
 .grow { flex: 1; min-width: 0; }
