@@ -3,7 +3,7 @@
 import { randomBytes } from "node:crypto";
 import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
-import { app, BrowserWindow, dialog, ipcMain, type IpcMainInvokeEvent, Menu, nativeTheme, Notification, Tray } from "electron";
+import { app, BrowserWindow, clipboard, dialog, ipcMain, type IpcMainInvokeEvent, Menu, nativeTheme, Notification, screen, Tray } from "electron";
 import { AvatarState } from "../shared/avatarState";
 import { setLanguage, tr } from "../shared/i18n";
 import { type Ev, GLOBAL_EVENTS, Session } from "../shared/session";
@@ -38,7 +38,7 @@ const background = process.env.PERSONAL_AGENT_BACKGROUND === "1" || process.argv
 let seq = 0; // every broadcast is numbered, so a window that starts from a snapshot knows which events it already contains
 const hotkeys = new Hotkeys();
 // Daemon events only the main process needs (large payloads, or not for a page that renders untrusted text).
-const NOT_FOR_WINDOWS = new Set(["captured", "tts_audio", "tts_done", "transcript"]);
+const NOT_FOR_WINDOWS = new Set(["captured", "tts_audio", "tts_done", "transcript", "yield_window"]);
 
 // ---- windows ---------------------------------------------------------------------------------------------------------------
 /** To the chat and approval windows; UI state (`_ui`: theme, language) goes to every window, the companion ones included. */
@@ -60,9 +60,29 @@ function showMain(key = "chat"): void {
   mainWin.focus();
 }
 
+/** Bottom-right corner of the display under the cursor, not the screen centre: the thing the agent works on is usually in the middle. */
+function dockApprovals(w: BrowserWindow): void {
+  const wa = screen.getDisplayNearestPoint(screen.getCursorScreenPoint()).workArea;
+  const { width, height } = w.getBounds();
+  const [x, y] = [wa.x + Math.max(0, wa.width - width - 16), wa.y + Math.max(0, wa.height - height - 16)];
+  w.setBounds({ x, y, width: Math.min(width, wa.width), height: Math.min(height, wa.height) });
+}
+
+/** The daemon found one of our windows on top of the control target: step aside (the approval window hides, the chat minimises). */
+function yieldWindow(hwnd: number): void {
+  for (const w of [approvalsWin, mainWin]) {
+    if (!w || w.isDestroyed() || !w.isVisible()) continue;
+    const b = w.getNativeWindowHandle();
+    if ((b.length >= 8 ? b.readBigUInt64LE(0) : BigInt(b.readUInt32LE(0))) !== BigInt(hwnd)) continue;
+    if (w === approvalsWin) w.hide();
+    else w.minimize();
+  }
+}
+
 function showApprovals(): void {
   if (!approvalsWin) return;
   if (approvalsWin.isMinimized()) approvalsWin.restore();
+  if (!approvalsWin.isVisible()) dockApprovals(approvalsWin);
   approvalsWin.show();
   approvalsWin.moveTop();
   approvalsWin.flashFrame(true); // Windows may refuse to hand over the focus: at least the taskbar button blinks
@@ -170,6 +190,9 @@ function onEvent(ev: Ev): void {
       break;
     case "control_aborted":
       notify(String(ev.reason ?? ""));
+      break;
+    case "yield_window":
+      yieldWindow(Number(ev.hwnd));
       break;
     case "screen_change":
       tray?.setToolTip(`${session.agentName} — ` + tr("screen changed ×{n}", "màn hình đổi ×{n}", { n: ev.changes ?? 0 }));
@@ -337,6 +360,7 @@ function decide(threadId: string, decisions: Record<string, unknown>): boolean {
   if (!client?.send({ type: "approve", thread_id: threadId, decisions })) return false;
   local({ type: "_decided", call_ids: Object.keys(decisions) });
   avatar.pendingApprovals = Object.keys(session.approvals).length;
+  if (!avatar.pendingApprovals) approvalsWin?.hide(); // answered: the action runs next, and this window must not cover what it works on
   avatar.busy = true;
   companion.refreshState();
   buildTray();
@@ -391,6 +415,7 @@ function registerIpc(): void {
     else if (action === "record" && fromMain) arg ? companion.startRecording("chat") : companion.stopRecording(); // the chat's Talk button
   });
   // The user picks a file or folder in the system dialog; only that one path goes back to the page.
+  handle("agent:copy", ["main"], (_e, text: unknown) => { clipboard.writeText(String(text ?? "").slice(0, 1_000_000)); });
   handle("agent:pick", ["main"], async (e, kind: unknown, title: unknown, extensions: unknown) => {
     const win = BrowserWindow.fromWebContents(e.sender)!;
     const res = await dialog.showOpenDialog(win, { title: String(title ?? ""), defaultPath: app.getPath("documents"),
@@ -412,7 +437,7 @@ async function start(): Promise<void> {
   tray = new Tray(orbIcon(DEFAULT_HIGHLIGHT));
   tray.on("click", () => showMain("chat"));
   mainWin = createWindow("main", { width: 1120, height: 700, minWidth: 720, minHeight: 480, title: session.agentName, icon: orbIcon(DEFAULT_HIGHLIGHT, 64) });
-  approvalsWin = createWindow("approvals", { width: 720, height: 760, minWidth: 480, minHeight: 360, icon: orbIcon(DEFAULT_HIGHLIGHT, 64) });
+  approvalsWin = createWindow("approvals", { width: 540, height: 600, minWidth: 480, minHeight: 360, icon: orbIcon(DEFAULT_HIGHLIGHT, 64) });
   hideInsteadOfClosing(mainWin);
   hideInsteadOfClosing(approvalsWin);
   mainWin.once("ready-to-show", () => background || showMain("chat"));

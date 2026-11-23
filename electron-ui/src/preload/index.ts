@@ -9,6 +9,8 @@ const api = {
   ui: (action: string, arg?: unknown): Promise<void> => ipcRenderer.invoke("agent:ui", action, arg),
   /** Start with Windows: pass a boolean to change it; always resolves to the current state. */
   autostart: (enabled?: boolean): Promise<boolean> => ipcRenderer.invoke("agent:autostart", enabled),
+  /** Put text on the clipboard (the page itself has no clipboard permission). */
+  copy: (text: string): Promise<void> => ipcRenderer.invoke("agent:copy", text),
   /** Let the user choose a file or folder; resolves to its path, or null when cancelled. */
   pick: (kind: "file" | "folder", title: string, extensions?: string[]): Promise<string | null> => ipcRenderer.invoke("agent:pick", kind, title, extensions),
   skins: (): Promise<string[]> => ipcRenderer.invoke("agent:skins"),

@@ -43,6 +43,16 @@ it("shows model output as text: markup in an answer never becomes live HTML", as
   expect(await r.main.title()).not.toBe("pwned");
 });
 
+it("the copy button puts the message text on the clipboard", async () => {
+  await r.app.evaluate(({ clipboard }) => clipboard.writeText("before"));
+  const msg = r.main.locator(".msg.agent").last();
+  await msg.hover();
+  await msg.locator('.acts button[aria-label="Copy"]').click();
+  await r.main.waitForTimeout(300);
+  const got = await r.app.evaluate(({ clipboard }) => clipboard.readText());
+  expect(got).toContain("pong **ok**"); // the message as written (markdown source), not the rendered text
+});
+
 it("a page that renders untrusted text cannot approve, start turns behind the user's back or reach Node", async () => {
   const probe = await r.main.evaluate(async () => {
     const w = window as any;
@@ -68,6 +78,11 @@ it("a risky action opens the approval window and the decision goes back", async 
   await r.approvals.locator(".radio", { hasText: "Approve" }).first().click();
   await r.approvals.locator("button.primary").click();
   await r.approvals.waitForSelector(".card", { state: "detached" });
+  // answered and nothing else waiting: the window must get out of the way of whatever the agent is about to operate
+  await r.app.evaluate(({ BrowserWindow }) => new Promise<void>((done) => {
+    const w = BrowserWindow.getAllWindows().find((x) => x.webContents.getURL().endsWith("#/approvals"))!;
+    const t = setInterval(() => { if (!w.isVisible()) { clearInterval(t); done(); } }, 50);
+  }));
   await r.main.waitForFunction(() => document.querySelectorAll(".msg.agent").length >= 2);
   expect(readFileSync(path.join(r.home, "ws", "out.txt"), "utf8")).toBe("hello");
   expect(await r.main.locator(".row .primary").isDisabled()).toBe(false);

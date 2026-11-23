@@ -339,6 +339,8 @@ button.sm { padding: 2px 8px; font-size: 10pt; }
 .msg:hover .acts, .msg .acts:focus-within { opacity: 1; }
 .msg.user .acts { justify-content: flex-end; }
 .msg.user .acts button { color: color-mix(in srgb, var(--surface) 70%, transparent); }
+/* inside the dark bubble the ghost hover (light --sunken) would swallow the light icon: tint the bubble instead, like the agent's icons tint the page */
+.msg.user .acts button:hover, .msg.user .acts button:active { background: color-mix(in srgb, var(--surface) 18%, transparent); color: var(--surface); }
 .msg.error button { margin-left: 8px; }
 button.earlier { display: block; margin: 0 auto 14px; background: transparent; color: var(--muted); }
 button.jump { position: absolute; left: 50%; transform: translateX(-50%); bottom: 150px; box-shadow: 0 6px 18px rgba(0, 0, 0, 0.25); z-index: 2; }

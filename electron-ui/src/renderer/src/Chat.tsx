@@ -187,7 +187,7 @@ export function Chat(): React.JSX.Element {
   const lastUser = (before: number): string | undefined => s.transcript.slice(0, before).reverse().find((e) => e.kind === "user")?.text;
   const actions = (e: Entry, i: number): Act | undefined => {
     const at = hidden + i;
-    const copy = (): void => void navigator.clipboard?.writeText(e.text);
+    const copy = (): void => void window.agent.copy(e.text); // navigator.clipboard is denied here: windows get no permissions but the voice window's microphone
     if (e.kind === "user") return { copy, edit: () => { setText(e.text); box.current?.focus(); } };
     const q = lastUser(at);
     const retry = q && !s.busy && !mine ? () => void window.agent.sendUser(q, []) : undefined;
