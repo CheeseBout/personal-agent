@@ -1,4 +1,3 @@
-import time
 from pathlib import Path
 from typing import Any
 
@@ -59,9 +58,8 @@ THREE = [S("s1", "find fact A", "web"), S("s2", "find fact B", "research"), S("s
 async def test_independent_steps_run_in_parallel_and_their_results_are_merged(env: Path, tmp_path: Path) -> None:
     wm, main = StepModel({s: [tok(f"found {s} data", 100)] for s in ("s1", "s2", "s3")}, delay=0.4), Main()
     h = h3(tmp_path, THREE, wm, main)
-    t0 = time.time()
     out = await turn(h)
-    assert time.time() - t0 < 1.1 and wm.max_running == 3  # three 0.4 s workers overlapped (sequential would be 1.2 s)
+    assert wm.max_running == 3  # three workers overlapped; no wall-clock bound, it flaked on slow CI runners
     assert out["final"] == "final composed answer" and out["verdict"] == "done" and out["worker_runs"] == 3
     assert states(out) == {"s1": "done", "s2": "done", "s3": "done", "s4": "pending"}
     assert all(f"found {s} data" in main.prompts[0] for s in ("s1", "s2", "s3"))  # the supervisor sees the compact results
