@@ -76,6 +76,49 @@ async def test_done_requires_a_result_for_every_goal_criterion() -> None:
     assert b.count("Verdict") == 2 and out["final"] == "try 2"  # first 'done' (covers only A) was rejected
 
 
+async def test_verifier_still_sees_evidence_from_before_its_own_continue_nudge(env: Path) -> None:
+    (env / "a.txt").write_text("secret-42")
+    more = Verdict(status="continue", message="say it more clearly")
+    b = FakeBrain(ScriptedModel(responses=[call("file_read", {"path": "a.txt"}), answer("first"), answer("second")]),
+                  intents=[TASK], verdicts=[more, DONE])
+    g, _, _ = make(b)
+    out = await run(g, "read a.txt")
+    assert out["final"] == "second" and b.count("Verdict") == 2
+    assert "secret-42" in str(b.inputs["Verdict"][1][1].content)  # the round-1 tool result is still evidence
+
+
+class StructuredFallbackBrain(FakeBrain):
+    """Classifier = the real fallback wiring: a primary that answers unusable JSON, then (optionally) a working fallback."""
+
+    def __init__(self, fallback_works: bool, **kw: Any) -> None:
+        super().__init__(**kw)
+        self.fallback_works = fallback_works
+
+    def structured(self, role: str, schema: type[Any]) -> Any:
+        if schema is not Intent:
+            return super().structured(role, schema)
+        from personal_agent.llm.factory import _require_parsed
+
+        def chain(parsed: Any, tokens: int) -> Any:
+            model = ScriptedModel(responses=[AIMessage("not json", usage_metadata={
+                "input_tokens": tokens, "output_tokens": 0, "total_tokens": tokens})])
+            return model | RunnableLambda(lambda m: {"raw": m, "parsed": parsed}) | RunnableLambda(_require_parsed)
+
+        return chain(None, 1000).with_fallbacks([chain(QUESTION if self.fallback_works else None, 100)])
+
+
+@pytest.mark.parametrize("fallback_works", [True, False])
+async def test_structured_attempts_with_unusable_json_are_charged(fallback_works: bool) -> None:
+    b = StructuredFallbackBrain(fallback_works, worker=ScriptedModel(responses=[answer("4")]))
+    g, _, m = make(b)
+    out = await run(g, "2+2?")
+    # both classifier attempts (1000 + 100 tokens) count, for the daily cap and for the task budget
+    if fallback_works:  # fast path: the classifier is the only metered call
+        assert m.today()["tokens"] == out["used"]["tokens"] == 1100
+    else:  # unparseable intent -> planned path, which adds its own small calls on top
+        assert m.today()["tokens"] >= 1100 and out["used"]["tokens"] >= 1100
+
+
 async def test_classifier_is_behind_the_budget_gate() -> None:
     b = FakeBrain()
     g, _, _ = make(b, max_seconds=0)

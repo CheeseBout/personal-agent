@@ -14,6 +14,7 @@ from collections.abc import Awaitable, Callable, Sequence
 from typing import Any, cast
 
 import structlog
+from langchain_core.callbacks import BaseCallbackHandler
 from langchain_core.messages import (
     AIMessage,
     AnyMessage,
@@ -23,6 +24,7 @@ from langchain_core.messages import (
     SystemMessage,
     ToolMessage,
 )
+from langchain_core.outputs import LLMResult
 from langchain_core.runnables import RunnableConfig
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.graph import END, START, StateGraph
@@ -89,6 +91,21 @@ SUMMARY_PROMPT = """Summarise the conversation so far for the assistant's own la
 the conversation. Keep: the user's goals and preferences, decisions, file paths, results and open questions."""
 
 
+class _Replies(BaseCallbackHandler):
+    """Collects every chat-model answer of one call, including fallback attempts whose JSON did not parse."""
+
+    run_inline = True  # append in order on the event loop, not in a thread pool
+
+    def __init__(self) -> None:
+        self.msgs: list[AIMessage] = []
+
+    def on_llm_end(self, response: LLMResult, **kwargs: Any) -> None:
+        for gens in response.generations:
+            for g in gens:
+                if isinstance(m := getattr(g, "message", None), AIMessage):
+                    self.msgs.append(m)
+
+
 def resume_command(decisions: dict[str, Any]) -> Command[Any]:
     """LangGraph silently ignores a falsy resume value, which would leave the thread paused forever;
     always send a non-empty dict (the '_' marker cannot collide with a provider tool-call id)."""
@@ -133,14 +150,20 @@ def build_graph(
         return charge(used, raw, cost)
 
     async def structured(role: str, schema: type[BaseModel], msgs: Sequence[BaseMessage], used: dict[str, Any]) -> Any:
+        # a reply with unusable JSON still cost tokens: charge every model answer in the fallback chain, not only the last
+        replies = _Replies()
         try:
-            out = await brain.structured(role, schema).ainvoke(msgs)
+            out = await brain.structured(role, schema).ainvoke(msgs, {"callbacks": [replies]})
         except StructuredParseError:  # every model in the chain answered with unusable JSON: callers have a safe default
             log.warning("structured_parse_failed", role=role, schema=schema.__name__)
             with contextlib.suppress(Exception):  # a metric must never break a turn
                 metrics.event("structured_parse_failed", role, False, 0)
+            for m in replies.msgs:
+                used = charge_call(used, m, role)
             return None, used
-        return out.get("parsed"), charge_call(used, out.get("raw"), role)
+        for m in replies.msgs or [out.get("raw")]:  # no callback fired (e.g. a test double): charge the returned raw
+            used = charge_call(used, m, role)
+        return out.get("parsed"), used
 
     def halt(state: AgentState) -> str | None:
         return "killed" if kill.engaged else exceeded(state["used"], B) or meter.daily_exceeded(B)
@@ -539,7 +562,8 @@ def build_graph(
         goal = state["goal"] or {}
         tail: list[ToolMessage] = []
         for m in reversed(state["messages"]):
-            if isinstance(m, HumanMessage):
+            # a "[verifier] Not done yet" nudge is not a new request: evidence from before it still counts
+            if isinstance(m, HumanMessage) and not text_of(m.content).startswith("[verifier]"):
                 break
             if isinstance(m, ToolMessage):
                 tail.append(m)
