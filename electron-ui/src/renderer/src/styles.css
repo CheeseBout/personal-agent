@@ -282,7 +282,7 @@ canvas.avatar { display: block; }
 .quick .hint { color: var(--muted); height: 18px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; text-shadow: 0 0 3px var(--bg); }
 .quick textarea { height: 56px; flex: none; resize: none; border-radius: 16px; }
 .radial { position: relative; font-family: var(--body); cursor: default; user-select: none; }
-.radial > svg { position: absolute; inset: 0; filter: drop-shadow(0 10px 22px rgba(0, 0, 0, 0.35)); }
+.radial > svg { position: absolute; inset: 0; } /* no drop-shadow: the window is only RING_MARGIN wider than the ring, so a shadow gets clipped into a square */
 .radial .slot { position: absolute; width: 80px; text-align: center; pointer-events: none; }
 .radial .glyph { font: 15pt "Segoe UI Symbol", "Segoe UI", sans-serif; line-height: 26px; height: 26px; }
 .radial .glyph svg.i { width: 20px; height: 20px; margin-top: 3px; }
